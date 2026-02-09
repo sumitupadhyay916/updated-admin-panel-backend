@@ -1,0 +1,470 @@
+// schema.prisma — Prisma ORM v5.10.0
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// ENUMS
+//
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  SELLER
+}
+
+enum AccountStatus {
+  ACTIVE
+  DISABLED
+  SUSPENDED
+  CLOSED
+}
+
+enum PermissionKey {
+  MANAGE_ADMINS
+  MANAGE_SELLERS
+  MANAGE_PRODUCTS
+  MANAGE_CATEGORIES
+  MANAGE_ORDERS
+  MANAGE_COUPONS
+  VIEW_ABANDONED_CARTS
+  VIEW_ANALYTICS
+  EXPORT_DATA
+}
+
+enum CategoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductStatus {
+  AVAILABLE
+  UNAVAILABLE
+}
+
+enum MaterialType {
+  PLASTIC
+  METAL
+  WOOD
+  GLASS
+  PAPER
+  FABRIC
+  RUBBER
+  CERAMIC
+  OTHER
+}
+
+enum OrderStatus {
+  PLACED
+  PAID
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum CartStatus {
+  ACTIVE
+  ORDERED
+  ABANDONED
+}
+
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+enum StockMovementType {
+  RESTOCK
+  SALE
+  ADJUSTMENT
+  RETURN
+}
+
+//
+// USERS (SuperAdmin / Admin / Seller in ONE table)
+//
+model User {
+  id           String        @id @default(cuid())
+  email        String        @unique
+  passwordHash String
+  name         String?
+  role         UserRole
+  status       AccountStatus @default(ACTIVE)
+
+  lastLoginAt  DateTime?
+
+  // For SELLER only: which admin owns/manages this seller
+  adminId      String?
+  admin        User?         @relation("AdminSellers", fields: [adminId], references: [id], onDelete: Restrict)
+  sellers      User[]        @relation("AdminSellers")
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // Admin-only permissions
+  permissions  AdminPermission[]
+
+  // Convenience relations for tenant-owned entities
+  categories   Category[]    @relation("AdminCategories")
+  products     Product[]     @relation("AdminProducts")
+  orders       Order[]       @relation("AdminOrders")
+  coupons      Coupon[]      @relation("AdminCoupons")
+  stockMoves   StockMovement[] @relation("AdminStockMoves")
+
+  // Seller convenience
+  sellerProducts Product[]   @relation("SellerProducts")
+  sellerOrders   Order[]     @relation("SellerOrders")
+  sellerCoupons  Coupon[]    @relation("SellerCoupons")
+  sellerStockMoves StockMovement[] @relation("SellerStockMoves")
+
+  // Enables composite FK targets like (sellerId, adminId) -> User(id, adminId)
+  @@unique([id, adminId])
+
+  @@index([role])
+  @@index([adminId])
+  @@index([role, adminId])
+}
+
+model AdminPermission {
+  id         String        @id @default(cuid())
+  adminId    String
+  admin      User          @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  permission PermissionKey
+
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([adminId, permission])
+  @@index([permission])
+}
+
+//
+// CONSUMERS (separate from internal users to keep logic clean)
+//
+model Consumer {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String?
+  name         String?
+  phone        String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  carts        Cart[]
+  orders       Order[]
+
+  @@index([email])
+}
+
+//
+// TENANT-OWNED ENTITIES
+// Every seller-owned record includes adminId for strict isolation
+//
+model Category {
+  id        String         @id @default(cuid())
+
+  adminId   String
+  admin     User           @relation("AdminCategories", fields: [adminId], references: [id], onDelete: Restrict)
+
+  name      String
+  slug      String
+  imageUrl  String?
+  status    CategoryStatus @default(ACTIVE)
+
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  products  Product[]
+
+  @@unique([adminId, slug])
+  @@unique([id, adminId]) // composite FK target
+  @@index([adminId, status])
+  @@index([adminId, name])
+}
+
+model Product {
+  id            String        @id @default(cuid())
+
+  // tenant isolation
+  adminId        String
+  admin          User          @relation("AdminProducts", fields: [adminId], references: [id], onDelete: Restrict)
+
+  // seller must belong to same admin via composite FK
+  sellerId       String
+  seller         User          @relation("SellerProducts", fields: [sellerId, adminId], references: [id, adminId], onDelete: Restrict)
+
+  categoryId     String
+  category       Category      @relation(fields: [categoryId, adminId], references: [id, adminId], onDelete: Restrict)
+
+  name           String
+  sku            String?
+  description    String?
+
+  materialType   MaterialType
+  materialNotes  String?
+
+  price          Decimal       @db.Decimal(12, 2)
+  currency       String        @default("USD")
+
+  stock          Int           @default(0)
+  status         ProductStatus @default(AVAILABLE)
+
+  rating         Decimal?      @db.Decimal(3, 2)
+  applications   String[]      @default([])
+  dimensions     Json?
+  packaging      String?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  images         ProductImage[]
+  orderItems     OrderItem[]
+  cartItems      CartItem[]
+  stockMoves     StockMovement[]
+
+  @@unique([id, adminId]) // composite FK target
+  @@unique([sellerId, sku])
+  @@index([adminId, status])
+  @@index([sellerId, status])
+  @@index([adminId, categoryId])
+  @@index([sellerId, categoryId])
+}
+
+model ProductImage {
+  id         String   @id @default(cuid())
+  productId  String
+  adminId    String
+
+  product    Product  @relation(fields: [productId, adminId], references: [id, adminId], onDelete: Cascade)
+
+  url        String
+  altText    String?
+  sortOrder  Int      @default(0)
+  isPrimary  Boolean  @default(false)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([productId, adminId, url])
+  @@index([productId, adminId])
+  @@index([productId, adminId, sortOrder])
+}
+
+//
+// CART (single-admin cart = simplest isolation)
+//
+model Cart {
+  id          String     @id @default(cuid())
+
+  consumerId  String
+  consumer    Consumer   @relation(fields: [consumerId], references: [id], onDelete: Cascade)
+
+  adminId     String     // cart belongs to one admin store
+  status      CartStatus @default(ACTIVE)
+
+  abandonedAt DateTime?
+  orderedAt   DateTime?
+
+  orderId     String?
+  order       Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  items       CartItem[]
+
+  @@index([consumerId, status])
+  @@index([adminId, status])
+  @@index([status, abandonedAt])
+}
+
+model CartItem {
+  id        String   @id @default(cuid())
+
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+
+  adminId   String
+  productId String
+  product   Product  @relation(fields: [productId, adminId], references: [id, adminId], onDelete: Restrict)
+
+  quantity  Int
+  unitPrice Decimal  @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productId, adminId])
+  @@index([cartId])
+  @@index([productId, adminId])
+}
+
+//
+// COUPONS (unique per admin is most common)
+//
+model Coupon {
+  id            String       @id @default(cuid())
+
+  adminId        String
+  admin          User         @relation("AdminCoupons", fields: [adminId], references: [id], onDelete: Restrict)
+
+  // optional: lock coupon to a seller under this admin
+  sellerId       String?
+  seller         User?        @relation("SellerCoupons", fields: [sellerId, adminId], references: [id, adminId], onDelete: SetNull)
+
+  code           String
+  discountType   DiscountType
+  discountValue  Decimal      @db.Decimal(12, 2)
+  minOrderValue  Decimal?     @db.Decimal(12, 2)
+
+  startAt        DateTime
+  endAt          DateTime
+
+  usageLimit     Int?
+  perUserLimit   Int?
+  isActive       Boolean      @default(true)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  orders         Order[]
+
+  @@unique([adminId, code])
+  @@unique([id, adminId]) // composite FK target
+  @@index([adminId, isActive])
+  @@index([startAt, endAt])
+  @@index([sellerId, adminId])
+}
+
+//
+// ORDERS
+//
+model Order {
+  id            String      @id @default(cuid())
+
+  adminId       String
+  admin         User        @relation("AdminOrders", fields: [adminId], references: [id], onDelete: Restrict)
+
+  orderNumber   String      @unique
+
+  consumerId    String
+  consumer      Consumer    @relation(fields: [consumerId], references: [id], onDelete: Restrict)
+
+  sellerId      String
+  seller        User        @relation("SellerOrders", fields: [sellerId, adminId], references: [id, adminId], onDelete: Restrict)
+
+  status        OrderStatus @default(PLACED)
+
+  couponId      String?
+  coupon        Coupon?     @relation(fields: [couponId, adminId], references: [id, adminId], onDelete: SetNull)
+
+  subtotal      Decimal     @db.Decimal(12, 2)
+  discountTotal Decimal     @db.Decimal(12, 2) @default(0.00)
+  taxTotal      Decimal     @db.Decimal(12, 2) @default(0.00)
+  shippingTotal Decimal     @db.Decimal(12, 2) @default(0.00)
+  grandTotal    Decimal     @db.Decimal(12, 2)
+
+  currency      String      @default("USD")
+
+  placedAt      DateTime    @default(now())
+  paidAt        DateTime?
+  shippedAt     DateTime?
+  deliveredAt   DateTime?
+  cancelledAt   DateTime?
+  refundedAt    DateTime?
+
+  shippingAddress Json?
+  billingAddress  Json?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  items         OrderItem[]
+  cart          Cart?
+
+  @@unique([id, adminId]) // composite FK target
+  @@index([adminId, status])
+  @@index([sellerId, adminId, status])
+  @@index([consumerId, placedAt])
+  @@index([adminId, placedAt])
+}
+
+model OrderItem {
+  id           String   @id @default(cuid())
+  adminId      String
+
+  orderId      String
+  order        Order    @relation(fields: [orderId, adminId], references: [id, adminId], onDelete: Cascade)
+
+  productId    String?
+  product      Product? @relation(fields: [productId, adminId], references: [id, adminId], onDelete: SetNull)
+
+  productName  String?
+  unitPrice    Decimal  @db.Decimal(12, 2)
+  quantity     Int
+  lineTotal    Decimal  @db.Decimal(12, 2)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([id, adminId]) // enables tenant-safe FK from StockMovement
+  @@index([orderId, adminId])
+  @@index([productId, adminId])
+}
+
+//
+// INVENTORY
+//
+model StockMovement {
+  id            String            @id @default(cuid())
+
+  adminId        String
+  admin          User              @relation("AdminStockMoves", fields: [adminId], references: [id], onDelete: Restrict)
+
+  sellerId       String
+  seller         User              @relation("SellerStockMoves", fields: [sellerId, adminId], references: [id, adminId], onDelete: Restrict)
+
+  productId      String
+  product        Product           @relation(fields: [productId, adminId], references: [id, adminId], onDelete: Cascade)
+
+  type           StockMovementType
+  quantity       Int
+  note           String?
+
+  orderItemId    String?
+  orderItem      OrderItem?        @relation(fields: [orderItemId, adminId], references: [id, adminId], onDelete: SetNull)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([adminId, type])
+  @@index([sellerId, adminId])
+  @@index([productId, adminId])
+}
+
+model Session {
+  id               String   @id @default(cuid())
+
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Store HASH of refresh token (recommended)
+  refreshTokenHash String
+
+  // Optional: allow multiple sessions/devices per user
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+
+  revokedAt        DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}

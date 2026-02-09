@@ -1,0 +1,570 @@
+// schema.prisma - Prisma ORM v5.10.0
+// NOTE: This schema is derived from frontend field usage (`app/src/types/index.ts`)
+// and reconciled against `backend/.sample` where compatible.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  super_admin
+  admin
+  seller
+  consumer
+}
+
+enum UserStatus {
+  active
+  suspended
+  inactive
+}
+
+enum CategoryStatus {
+  active
+  inactive
+}
+
+enum ProductStatus {
+  active
+  inactive
+  pending
+  rejected
+}
+
+enum Deity {
+  Ganesh
+  Krishna
+  Shiva
+  Durga
+  Lakshmi
+  Saraswati
+  Hanuman
+  Ram
+  Vishnu
+  Kali
+  Other
+}
+
+enum Material {
+  Brass
+  Marble
+  Resin
+  Clay
+  Silver
+  Wood
+  Gold
+  Panchdhatu
+  Copper
+}
+
+enum ReligionCategory {
+  Hindu
+  Buddhist
+  Jain
+  Sikh
+  Universal
+}
+
+enum PackagingType {
+  Box
+  Velvet_Box
+  Wooden_Case
+  Gift_Wrap
+  Standard
+}
+
+enum Occasion {
+  Diwali
+  Puja
+  Wedding
+  Festival
+  Housewarming
+  Birthday
+  Anniversary
+  Corporate
+  Daily_Worship
+  Tuesday_Special
+  Navratri
+  Ganesh_Chaturthi
+  Vasant_Panchami
+}
+
+enum InventoryMovementType {
+  in
+  out
+  adjustment
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+  returned
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum FulfillmentStatus {
+  unfulfilled
+  partial
+  fulfilled
+}
+
+enum PayoutStatus {
+  pending
+  processing
+  completed
+  rejected
+}
+
+enum DiscountType {
+  percentage
+  fixed
+}
+
+enum ApplicableTo {
+  all
+  specific_sellers
+  specific_products
+}
+
+enum QueryStatus {
+  open
+  in_progress
+  resolved
+  closed
+}
+
+enum QueryPriority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum AddressType {
+  home
+  work
+  other
+}
+
+// this is custom frontend data....
+
+enum SupportPageSlug {
+  help_center
+  faqs
+  privacy_policy
+  terms_conditions
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         UserRole
+  avatar       String?
+  phone        String?
+  status       UserStatus @default(active)
+
+  // Admin/SuperAdmin
+  permissions  String[]   @default([])
+
+  // Audit
+  createdById  String?
+  createdBy    User?      @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers User[]     @relation("UserCreatedBy")
+
+  // Seller fields: link to Admin who owns/manages this seller
+  adminId      String?
+  admin        User?      @relation("AdminSellers", fields: [adminId], references: [id], onDelete: Restrict)
+  sellers      User[]     @relation("AdminSellers")
+  
+  // Admin category assignments
+  assignedCategories AdminCategory[] @relation("AdminCategories")
+
+  // Seller fields (nullable for non-sellers)
+  businessName      String?
+  businessAddress   String?
+  gstNumber         String?
+  commissionRate    Float?   // percentage
+  totalEarnings     Float?   @default(0)
+  availableBalance  Float?   @default(0)
+  pendingBalance    Float?   @default(0)
+
+  // Relations
+  addresses     Address[]
+  products      Product[]   @relation("SellerProducts")
+  orders        Order[]     @relation("SellerOrders")
+  payouts       Payout[]    @relation("SellerPayouts")
+  processedPayouts Payout[] @relation("PayoutProcessedBy")
+  inventoryMoves InventoryMovement[] @relation("InventoryMovesByUser")
+  timelineEvents OrderTimeline[] @relation("OrderTimelineByUser")
+  queryResponses QueryResponse[] @relation("QueryResponseByUser")
+  updatedSupportPages SupportPage[] @relation("SupportPageUpdatedBy")
+
+  customerOrders Order[] @relation("CustomerOrders")
+  createdCoupons Coupon[] @relation("CouponCreatedBy")
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([role])
+  @@index([status])
+  @@index([createdById])
+  @@index([adminId])
+}
+
+model Address {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AddressType @default(home)
+  street    String
+  city      String
+  state     String
+  pincode   String
+  country   String      @default("India")
+  isDefault Boolean     @default(false)
+
+  // Orders referencing this address
+  shippingForOrders Order[] @relation("OrderShippingAddress")
+  billingForOrders  Order[] @relation("OrderBillingAddress")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
+}
+
+model Category {
+  id           Int            @id @default(autoincrement())
+  cid          String         @unique @default(cuid())
+  name         String
+  status       CategoryStatus @default(active)
+  noOfProducts Int            @default(0)
+  products     Product[]
+  assignedAdmins AdminCategory[]
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([status])
+  @@index([name])
+  @@index([cid])
+}
+
+model AdminCategory {
+  id         String   @id @default(cuid())
+  adminId    String
+  admin      User     @relation("AdminCategories", fields: [adminId], references: [id], onDelete: Cascade)
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+
+  @@unique([adminId, categoryId])
+  @@index([adminId])
+  @@index([categoryId])
+}
+
+enum StockStatus {
+  available
+  unavailable
+}
+
+model Product {
+  id               Int           @id @default(autoincrement())
+  pid              String        @unique @default(cuid())
+  name             String
+  description      String?
+  deity            Deity
+  material         Material
+  height           Float
+  weight           Float
+  handcrafted      Boolean       @default(false)
+  occasion         Occasion[]    @default([])
+  religionCategory ReligionCategory
+  packagingType    PackagingType
+  fragile          Boolean       @default(false)
+  price            Float
+  comparePrice     Float?
+  stock            StockStatus   @default(available)
+  lowStockThreshold Int          @default(5)
+  reviewCount      Int           @default(0)
+  isFeatured       Boolean       @default(false)
+  tags             String[]      @default([])
+
+  sellerId         String
+  seller           User          @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Restrict)
+
+  categoryId       Int
+  category         Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  images           ProductImage[]
+  inventoryMovements InventoryMovement[]
+  orderItems       OrderItem[]
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([sellerId])
+  @@index([stock])
+  @@index([isFeatured])
+  @@index([categoryId])
+  @@index([pid])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([productId, url])
+  @@index([productId, sortOrder])
+}
+
+model InventoryMovement {
+  id            String                @id @default(cuid())
+  productId     Int
+  product       Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type          InventoryMovementType
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  reason        String
+  notes         String?
+  createdById   String
+  createdBy     User                  @relation("InventoryMovesByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime              @default(now())
+
+  @@index([productId])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+model Order {
+  id                 String            @id @default(cuid())
+  orderNumber        String            @unique
+
+  customerId         String
+  customer           User              @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: Restrict)
+
+  // For admin views, we store a primary seller per order; items can still include multiple sellers.
+  sellerId           String?
+  seller             User?             @relation("SellerOrders", fields: [sellerId], references: [id], onDelete: SetNull)
+
+  shippingAddressId  String
+  shippingAddress    Address           @relation("OrderShippingAddress", fields: [shippingAddressId], references: [id], onDelete: Restrict)
+  billingAddressId   String
+  billingAddress     Address           @relation("OrderBillingAddress", fields: [billingAddressId], references: [id], onDelete: Restrict)
+
+  items              OrderItem[]
+
+  subtotal           Float
+  taxAmount          Float @default(0)
+  shippingAmount     Float @default(0)
+  discountAmount     Float @default(0)
+  totalAmount        Float
+  couponCode         String?
+
+  orderStatus        OrderStatus       @default(pending)
+  paymentStatus      PaymentStatus     @default(pending)
+  paymentMethod      String
+  fulfillmentStatus  FulfillmentStatus @default(unfulfilled)
+
+  trackingNumber     String?
+  carrier            String?
+  notes              String?
+  internalNotes      String?
+
+  sellerEarnings     Float @default(0)
+  platformCommission Float @default(0)
+
+  timeline           OrderTimeline[]
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([sellerId])
+  @@index([orderStatus])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id            String  @id @default(cuid())
+  orderId       String
+  order         Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId     Int
+  product       Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // Snapshot fields to match frontend expectations
+  productName   String
+  productImage  String
+  deity         Deity
+  material      Material
+  height        Float
+  weight        Float
+  packagingType PackagingType
+  fragile       Boolean
+  quantity      Int
+  unitPrice     Float
+  totalPrice    Float
+  sellerId      String
+  sellerName    String
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([sellerId])
+}
+
+model OrderTimeline {
+  id          String      @id @default(cuid())
+  orderId     String
+  order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status      OrderStatus
+  description String
+  createdById String
+  createdBy   User        @relation("OrderTimelineByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime    @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+model Payout {
+  id               String      @id @default(cuid())
+  sellerId         String
+  seller           User        @relation("SellerPayouts", fields: [sellerId], references: [id], onDelete: Restrict)
+  amount           Float
+  commissionDeduction Float    @default(0)
+  finalAmount      Float
+  status           PayoutStatus @default(pending)
+  paymentMethod    String
+  accountDetails   String
+  transactionId    String?
+  requestedAt      DateTime     @default(now())
+  processedAt      DateTime?
+  processedById    String?
+  processedBy      User?        @relation("PayoutProcessedBy", fields: [processedById], references: [id], onDelete: SetNull)
+  notes            String?
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([requestedAt])
+}
+
+model Coupon {
+  id               String       @id @default(cuid())
+  code             String       @unique
+  description      String
+  discountType     DiscountType
+  discountValue    Float
+  minOrderAmount   Float?
+  maxDiscountAmount Float?
+  usageLimit       Int?
+  usageCount       Int          @default(0)
+  startDate        DateTime
+  endDate          DateTime
+  applicableTo     ApplicableTo @default(all)
+  sellerIds        String[]     @default([])
+  productIds       String[]     @default([])
+  isActive         Boolean      @default(true)
+  createdById      String
+  createdBy        User         @relation("CouponCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt        DateTime     @default(now())
+
+  @@index([isActive])
+  @@index([startDate, endDate])
+}
+
+model ContactQuery {
+  id         String        @id @default(cuid())
+  name       String
+  email      String
+  phone      String?
+  subject    String
+  message    String
+  category   String
+  status     QueryStatus   @default(open)
+  priority   QueryPriority @default(medium)
+  assignedTo String?
+  responses  QueryResponse[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model QueryResponse {
+  id               String      @id @default(cuid())
+  queryId          String
+  query            ContactQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+  message          String
+  respondedById    String
+  respondedBy      User        @relation("QueryResponseByUser", fields: [respondedById], references: [id], onDelete: Restrict)
+  respondedByName  String
+  createdAt        DateTime    @default(now())
+
+  @@index([queryId])
+  @@index([createdAt])
+}
+
+model SupportPage {
+  id          String          @id @default(cuid())
+  slug        SupportPageSlug @unique
+  title       String
+  content     String
+  lastUpdated DateTime        @default(now())
+  updatedById String
+  updatedBy   User            @relation("SupportPageUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+}
+
+model FAQ {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  category  String
+  order     Int      @default(0)
+  isActive  Boolean  @default(true)
+
+  @@index([category])
+  @@index([isActive])
+  @@index([order])
+}
+
+model PlatformSettings {
+  id                    String   @id @default(cuid())
+  platformName          String   @default("Innorade")
+  platformLogo          String?
+  supportEmail          String   @default("support@innorade.com")
+  supportPhone          String   @default("+91-0000000000")
+  defaultCommissionRate Float    @default(15)
+  minPayoutAmount       Float    @default(1000)
+  currency              String   @default("INR")
+  timezone              String   @default("Asia/Kolkata")
+  updatedAt             DateTime @updatedAt
+}
+
+

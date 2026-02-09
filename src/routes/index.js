@@ -1,0 +1,31 @@
+const express = require('express');
+
+const authRoutes = require('./auth.routes');
+const usersRoutes = require('./users.routes');
+const sellersRoutes = require('./sellers.routes');
+const productsRoutes = require('./products.routes');
+const ordersRoutes = require('./orders.routes');
+const payoutsRoutes = require('./payouts.routes');
+const couponsRoutes = require('./coupons.routes');
+const categoriesRoutes = require('./categories.routes');
+const adminCategoriesRoutes = require('./adminCategories.routes');
+const dashboardRoutes = require('./dashboard.routes');
+const supportRoutes = require('./support.routes');
+
+const router = express.Router();
+
+router.use('/auth', authRoutes);
+router.use('/users', usersRoutes);
+router.use('/sellers', sellersRoutes);
+router.use('/products', productsRoutes);
+router.use('/orders', ordersRoutes);
+router.use('/payouts', payoutsRoutes);
+router.use('/coupons', couponsRoutes);
+router.use('/categories', categoriesRoutes);
+router.use('/admin-categories', adminCategoriesRoutes);
+router.use('/dashboard', dashboardRoutes);
+router.use('/support', supportRoutes);
+
+module.exports = router;
+
+
