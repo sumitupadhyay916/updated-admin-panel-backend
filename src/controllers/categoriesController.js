@@ -32,6 +32,40 @@ async function listCategories(req, res) {
           meta: buildMeta({ page, limit, total: 0 }),
         });
       }
+    } else if (user && user.role === 'seller') {
+      // If user is seller, filter by categories assigned to their admin
+      const seller = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { adminId: true },
+      });
+      
+      if (seller && seller.adminId) {
+        const assignedCategoryIds = await prisma.adminCategory.findMany({
+          where: { adminId: seller.adminId },
+          select: { categoryId: true },
+        });
+        const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
+        console.log(`[Categories] Seller ${user.id} (admin: ${seller.adminId}) has assigned categories:`, categoryIds);
+        if (categoryIds.length > 0) {
+          where.id = { in: categoryIds };
+        } else {
+          // Seller's admin has no categories assigned, return empty
+          console.log(`[Categories] Seller ${user.id}'s admin has no categories assigned, returning empty`);
+          return ok(res, {
+            message: 'Categories fetched',
+            data: [],
+            meta: buildMeta({ page, limit, total: 0 }),
+          });
+        }
+      } else {
+        // Seller has no admin assigned, return empty
+        console.log(`[Categories] Seller ${user.id} has no admin assigned, returning empty`);
+        return ok(res, {
+          message: 'Categories fetched',
+          data: [],
+          meta: buildMeta({ page, limit, total: 0 }),
+        });
+      }
     }
 
     const [total, rows] = await Promise.all([

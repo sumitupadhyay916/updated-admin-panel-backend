@@ -153,6 +153,29 @@ async function createProduct(req, res) {
     }
   }
 
+  // For seller role, verify the category is assigned to their admin
+  if (req.user.role === 'seller') {
+    const seller = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { adminId: true },
+    });
+    
+    if (!seller || !seller.adminId) {
+      return fail(res, { status: 403, message: 'You are not assigned to an admin' });
+    }
+    
+    const hasAccess = await prisma.adminCategory.findFirst({
+      where: {
+        adminId: seller.adminId,
+        categoryId: category.id,
+      },
+    });
+    
+    if (!hasAccess) {
+      return fail(res, { status: 403, message: 'You can only create products in categories assigned to your admin' });
+    }
+  }
+
   // Verify seller exists and admin has access to them
   const seller = await prisma.user.findUnique({ 
     where: { id: sellerId },
@@ -216,6 +239,47 @@ async function updateProduct(req, res) {
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
   if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
 
+  // If categoryId is being changed, validate access
+  if (req.body.categoryId && req.body.categoryId !== existing.categoryId) {
+    const newCategoryId = parseInt(req.body.categoryId, 10);
+    
+    // For admin role, verify they have access to the new category
+    if (req.user.role === 'admin') {
+      const hasAccess = await prisma.adminCategory.findFirst({
+        where: {
+          adminId: req.user.id,
+          categoryId: newCategoryId,
+        },
+      });
+      if (!hasAccess) {
+        return fail(res, { status: 403, message: 'You do not have access to this category' });
+      }
+    }
+    
+    // For seller role, verify the new category is assigned to their admin
+    if (req.user.role === 'seller') {
+      const seller = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        select: { adminId: true },
+      });
+      
+      if (!seller || !seller.adminId) {
+        return fail(res, { status: 403, message: 'You are not assigned to an admin' });
+      }
+      
+      const hasAccess = await prisma.adminCategory.findFirst({
+        where: {
+          adminId: seller.adminId,
+          categoryId: newCategoryId,
+        },
+      });
+      
+      if (!hasAccess) {
+        return fail(res, { status: 403, message: 'You can only assign products to categories assigned to your admin' });
+      }
+    }
+  }
+
   const updateData = {
     name: req.body.name ?? undefined,
     description: req.body.description ?? undefined,
@@ -237,6 +301,11 @@ async function updateProduct(req, res) {
     isFeatured: req.body.isFeatured ?? undefined,
     stock: req.body.stock ?? undefined,
   };
+  
+  // Add categoryId to updateData if provided
+  if (req.body.categoryId) {
+    updateData.categoryId = parseInt(req.body.categoryId, 10);
+  }
 
   // Allow super_admin and admin to change sellerId
   if ((req.user.role === 'super_admin' || req.user.role === 'admin') && req.body.sellerId) {
