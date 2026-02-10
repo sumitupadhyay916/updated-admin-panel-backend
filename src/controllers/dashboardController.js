@@ -7,11 +7,14 @@ const { serializePayout } = require('../serializers/payoutSerializer');
 async function getStats() {
   const prisma = getPrisma();
 
+  console.log('[Dashboard] Starting to fetch stats...');
+
   const [
     totalOrders,
     totalProducts,
     totalCustomers,
     totalSellers,
+    totalAdmins,
     pendingOrders,
     pendingPayouts,
     openQueries,
@@ -21,23 +24,36 @@ async function getStats() {
     prisma.product.count(),
     prisma.user.count({ where: { role: 'consumer' } }),
     prisma.user.count({ where: { role: 'seller' } }),
+    prisma.user.count({ where: { role: 'admin' } }),
     prisma.order.count({ where: { orderStatus: 'pending' } }),
     prisma.payout.count({ where: { status: 'pending' } }),
     prisma.contactQuery.count({ where: { status: { in: ['open', 'in_progress'] } } }),
     prisma.order.aggregate({ _sum: { totalAmount: true } }),
   ]);
 
-  const allProducts = await prisma.product.findMany({ select: { stockQuantity: true, lowStockThreshold: true } });
-  const lowStockProducts = allProducts.filter((p) => p.stockQuantity <= p.lowStockThreshold).length;
+  console.log('[Dashboard] Raw counts:', {
+    totalOrders,
+    totalProducts,
+    totalCustomers,
+    totalSellers,
+    totalAdmins,
+  });
+
+  // Note: Product model uses 'stock' enum (available/unavailable), not stockQuantity
+  // For low stock, we'll just count unavailable products
+  const lowStockProducts = await prisma.product.count({ 
+    where: { stock: 'unavailable' } 
+  });
 
   const totalRevenue = Number(revenueAgg._sum.totalAmount || 0);
 
-  return {
+  const stats = {
     totalRevenue,
     totalOrders,
     totalProducts,
     totalCustomers,
     totalSellers,
+    totalAdmins,
     pendingOrders,
     lowStockProducts,
     pendingPayouts,
@@ -46,6 +62,10 @@ async function getStats() {
     ordersChange: 8.2,
     customersChange: 5.1,
   };
+
+  console.log('[Dashboard] Final stats object:', stats);
+
+  return stats;
 }
 
 function makeSeries(names, key, total) {
@@ -58,8 +78,20 @@ function makeSeries(names, key, total) {
 }
 
 async function superAdminDashboard(req, res) {
+  console.log('[Dashboard] Super Admin endpoint called at:', new Date().toISOString());
+  console.log('[Dashboard] User:', req.user?.email, 'Role:', req.user?.role);
+  
   const stats = await getStats();
-  return ok(res, { message: 'Dashboard fetched', data: stats });
+  console.log('[Dashboard] Super Admin stats:', stats);
+  
+  // Add version to verify new code is loaded
+  const response = {
+    ...stats,
+    _version: '2.0.0', // This proves new code is running
+    _timestamp: new Date().toISOString(),
+  };
+  
+  return ok(res, { message: 'Dashboard fetched', data: response });
 }
 
 async function adminDashboard(req, res) {

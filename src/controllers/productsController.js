@@ -51,6 +51,10 @@ async function listProducts(req, res) {
       console.log(`[Products] Admin ${user.id} has no categories assigned, returning empty`);
       return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
+  } else if (user && user.role === 'seller') {
+    // Sellers can only see their own products
+    console.log(`[Products] Seller ${user.id} filtering by sellerId`);
+    where.sellerId = user.id;
   } else if (req.query.categoryId) {
     // For super_admin or other roles, allow specific categoryId filter
     where.categoryId = parseInt(req.query.categoryId, 10);
@@ -104,11 +108,17 @@ async function getProduct(req, res) {
 async function createProduct(req, res) {
   const prisma = getPrisma();
   
-  // For super admin, allow creating products with minimal fields
-  const isSuperAdmin = req.user.role === 'super_admin';
-  const sellerId = isSuperAdmin ? (req.body.sellerId || req.user.id) : (req.user.role === 'seller' ? req.user.id : null);
+  // Determine sellerId based on user role
+  let sellerId;
+  if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+    // Super admin and admin can specify sellerId from request body
+    sellerId = req.body.sellerId;
+  } else if (req.user.role === 'seller') {
+    // Sellers can only create products for themselves
+    sellerId = req.user.id;
+  }
   
-  if (!sellerId) return fail(res, { status: 403, message: 'Seller ID is required' });
+  if (!sellerId) return fail(res, { status: 400, message: 'Seller ID is required' });
 
   // Validate required fields
   if (!req.body.name || !req.body.name.trim()) {
@@ -128,6 +138,36 @@ async function createProduct(req, res) {
   const category = await prisma.category.findUnique({ where: { id: parseInt(req.body.categoryId, 10) } });
   if (!category) {
     return fail(res, { status: 400, message: 'Invalid category' });
+  }
+
+  // For admin role, verify they have access to this category
+  if (req.user.role === 'admin') {
+    const hasAccess = await prisma.adminCategory.findFirst({
+      where: {
+        adminId: req.user.id,
+        categoryId: category.id,
+      },
+    });
+    if (!hasAccess) {
+      return fail(res, { status: 403, message: 'You do not have access to this category' });
+    }
+  }
+
+  // Verify seller exists and admin has access to them
+  const seller = await prisma.user.findUnique({ 
+    where: { id: sellerId },
+    include: { products: { select: { categoryId: true }, take: 1 } }
+  });
+  if (!seller || seller.role !== 'seller') {
+    return fail(res, { status: 400, message: 'Invalid seller' });
+  }
+
+  // For admin role, verify they have access to this seller
+  if (req.user.role === 'admin') {
+    // Check if seller belongs to this admin
+    if (seller.adminId !== req.user.id) {
+      return fail(res, { status: 403, message: 'You do not have access to this seller' });
+    }
   }
 
   // For super admin simplified creation, use defaults for missing fields

@@ -6,6 +6,15 @@ const dashboardController = require('../controllers/dashboardController');
 
 const router = express.Router();
 
+// Test endpoint to verify backend is working
+router.get('/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Dashboard routes working',
+    timestamp: new Date().toISOString()
+  });
+});
+
 router.get('/super-admin', requireAuth, asyncHandler(dashboardController.superAdminDashboard));
 router.get('/admin', requireAuth, asyncHandler(dashboardController.adminDashboard));
 router.get('/seller', requireAuth, asyncHandler(dashboardController.sellerDashboard));
