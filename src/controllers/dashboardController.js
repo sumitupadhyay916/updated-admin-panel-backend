@@ -4,10 +4,10 @@ const { serializeOrder } = require('../serializers/orderSerializer');
 const { serializeProduct } = require('../serializers/productSerializer');
 const { serializePayout } = require('../serializers/payoutSerializer');
 
-async function getStats() {
+async function getStats(userId = null, userRole = null) {
   const prisma = getPrisma();
 
-  console.log('[Dashboard] Starting to fetch stats...');
+  console.log('[Dashboard] Starting to fetch stats for user:', userId, 'role:', userRole);
 
   const [
     totalOrders,
@@ -45,6 +45,33 @@ async function getStats() {
     where: { stock: 'unavailable' } 
   });
 
+  // Get total categories count based on user role
+  let totalCategories = 0;
+  if (userRole === 'super_admin') {
+    // Super admin sees all categories
+    totalCategories = await prisma.category.count();
+  } else if (userRole === 'admin' && userId) {
+    // Admin sees only their assigned categories
+    const assignedCategoryIds = await prisma.adminCategory.findMany({
+      where: { adminId: userId },
+      select: { categoryId: true },
+    });
+    totalCategories = assignedCategoryIds.length;
+  } else if (userRole === 'seller' && userId) {
+    // Seller sees categories assigned to their admin
+    const seller = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { adminId: true },
+    });
+    if (seller && seller.adminId) {
+      const assignedCategoryIds = await prisma.adminCategory.findMany({
+        where: { adminId: seller.adminId },
+        select: { categoryId: true },
+      });
+      totalCategories = assignedCategoryIds.length;
+    }
+  }
+
   const totalRevenue = Number(revenueAgg._sum.totalAmount || 0);
 
   const stats = {
@@ -54,6 +81,7 @@ async function getStats() {
     totalCustomers,
     totalSellers,
     totalAdmins,
+    totalCategories,
     pendingOrders,
     lowStockProducts,
     pendingPayouts,
@@ -81,13 +109,13 @@ async function superAdminDashboard(req, res) {
   console.log('[Dashboard] Super Admin endpoint called at:', new Date().toISOString());
   console.log('[Dashboard] User:', req.user?.email, 'Role:', req.user?.role);
   
-  const stats = await getStats();
+  const stats = await getStats(req.user?.id, req.user?.role);
   console.log('[Dashboard] Super Admin stats:', stats);
   
   // Add version to verify new code is loaded
   const response = {
     ...stats,
-    _version: '2.0.0', // This proves new code is running
+    _version: '3.0.0', // Updated version for category count
     _timestamp: new Date().toISOString(),
   };
   
@@ -95,13 +123,29 @@ async function superAdminDashboard(req, res) {
 }
 
 async function adminDashboard(req, res) {
-  const stats = await getStats();
+  const stats = await getStats(req.user?.id, req.user?.role);
   return ok(res, { message: 'Dashboard fetched', data: stats });
 }
 
 async function sellerDashboard(req, res) {
-  const stats = await getStats();
-  return ok(res, { message: 'Dashboard fetched', data: stats });
+  const prisma = getPrisma();
+  const userId = req.user?.id;
+  
+  // Get seller-specific stats
+  const stats = await getStats(userId, req.user?.role);
+  
+  // Get seller's product count
+  const myProductsCount = await prisma.product.count({
+    where: { sellerId: userId },
+  });
+  
+  return ok(res, { 
+    message: 'Dashboard fetched', 
+    data: {
+      ...stats,
+      myProducts: myProductsCount,
+    }
+  });
 }
 
 async function revenueChart(req, res) {
