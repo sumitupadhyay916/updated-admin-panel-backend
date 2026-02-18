@@ -111,8 +111,9 @@ async function createProduct(req, res) {
   // Determine sellerId based on user role
   let sellerId;
   if (req.user.role === 'super_admin' || req.user.role === 'admin') {
-    // Super admin and admin can specify sellerId from request body
-    sellerId = req.body.sellerId;
+    // Super admin and admin can specify sellerId from request body.
+    // If not provided, default to creating under their own account ("My Products").
+    sellerId = req.body.sellerId || req.user.id;
   } else if (req.user.role === 'seller') {
     // Sellers can only create products for themselves
     sellerId = req.user.id;
@@ -176,20 +177,30 @@ async function createProduct(req, res) {
     }
   }
 
-  // Verify seller exists and admin has access to them
-  const seller = await prisma.user.findUnique({ 
+  // Verify seller exists and validate based on role:
+  // - For admin/super_admin creating "My Products": sellerId can be their own user id
+  // - Otherwise, sellerId must belong to a seller user
+  const seller = await prisma.user.findUnique({
     where: { id: sellerId },
-    include: { products: { select: { categoryId: true }, take: 1 } }
   });
-  if (!seller || seller.role !== 'seller') {
+  if (!seller) {
     return fail(res, { status: 400, message: 'Invalid seller' });
   }
 
-  // For admin role, verify they have access to this seller
-  if (req.user.role === 'admin') {
-    // Check if seller belongs to this admin
-    if (seller.adminId !== req.user.id) {
-      return fail(res, { status: 403, message: 'You do not have access to this seller' });
+  const isMyProductsOwner =
+    (req.user.role === 'admin' || req.user.role === 'super_admin') && sellerId === req.user.id;
+
+  if (!isMyProductsOwner) {
+    // When assigning to a seller, validate the target is a seller
+    if (seller.role !== 'seller') {
+      return fail(res, { status: 400, message: 'Invalid seller' });
+    }
+
+    // For admin role, verify they have access to this seller
+    if (req.user.role === 'admin') {
+      if (seller.adminId !== req.user.id) {
+        return fail(res, { status: 403, message: 'You do not have access to this seller' });
+      }
     }
   }
 
@@ -309,7 +320,22 @@ async function updateProduct(req, res) {
 
   // Allow super_admin and admin to change sellerId
   if ((req.user.role === 'super_admin' || req.user.role === 'admin') && req.body.sellerId) {
-    updateData.sellerId = req.body.sellerId;
+    const nextSellerId = String(req.body.sellerId);
+
+    // Allow moving product back to "My Products" (admin/super_admin owns it)
+    const isMyProductsOwner = nextSellerId === req.user.id;
+
+    if (!isMyProductsOwner) {
+      const targetSeller = await prisma.user.findUnique({ where: { id: nextSellerId } });
+      if (!targetSeller || targetSeller.role !== 'seller') {
+        return fail(res, { status: 400, message: 'Invalid seller' });
+      }
+      if (req.user.role === 'admin' && targetSeller.adminId !== req.user.id) {
+        return fail(res, { status: 403, message: 'You do not have access to this seller' });
+      }
+    }
+
+    updateData.sellerId = nextSellerId;
   }
 
   const p = await prisma.product.update({

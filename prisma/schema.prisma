@@ -60,6 +60,7 @@ enum Material {
   Gold
   Panchdhatu
   Copper
+  Other
 }
 
 enum ReligionCategory {
@@ -195,6 +196,10 @@ model User {
   
   // Admin category assignments
   assignedCategories AdminCategory[] @relation("AdminCategories")
+  assignedSellerCategories SellerCategory[] @relation("AdminSellerCategories")
+  
+  // Seller category assignments
+  sellerCategories SellerCategory[] @relation("SellerCategories")
 
   // Seller fields (nullable for non-sellers)
   businessName      String?
@@ -255,10 +260,14 @@ model Category {
   id           Int            @id @default(autoincrement())
   cid          String         @unique @default(cuid())
   name         String
+  slug         String?        @unique
+  imageUrl     String?
+  description  String?
   status       CategoryStatus @default(active)
   noOfProducts Int            @default(0)
   products     Product[]
   assignedAdmins AdminCategory[]
+  sellerCategories SellerCategory[]
 
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -266,6 +275,7 @@ model Category {
   @@index([status])
   @@index([name])
   @@index([cid])
+  @@index([slug])
 }
 
 model AdminCategory {
@@ -278,6 +288,22 @@ model AdminCategory {
 
   @@unique([adminId, categoryId])
   @@index([adminId])
+  @@index([categoryId])
+}
+
+model SellerCategory {
+  id         String   @id @default(cuid())
+  adminId    String
+  admin      User     @relation("AdminSellerCategories", fields: [adminId], references: [id], onDelete: Cascade)
+  sellerId   String
+  seller     User     @relation("SellerCategories", fields: [sellerId], references: [id], onDelete: Cascade)
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
+
+  @@unique([sellerId, categoryId])
+  @@index([adminId])
+  @@index([sellerId])
   @@index([categoryId])
 }
 
@@ -307,6 +333,8 @@ model Product {
   reviewCount      Int           @default(0)
   isFeatured       Boolean       @default(false)
   tags             String[]      @default([])
+  subcategorySlug  String?
+  metadata         Json?
 
   sellerId         String
   seller           User          @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Restrict)
@@ -326,6 +354,7 @@ model Product {
   @@index([isFeatured])
   @@index([categoryId])
   @@index([pid])
+  @@index([subcategorySlug])
 }
 
 model ProductImage {

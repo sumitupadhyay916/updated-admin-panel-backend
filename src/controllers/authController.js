@@ -21,7 +21,7 @@ function serializeUserByRole(user, addresses) {
 async function login(req, res) {
   const result = await authService.login(req.body);
   if (!result) {
-    return fail(res, { status: 200, message: 'Invalid credentials' });
+    return fail(res, { status: 401, message: 'Invalid email or password' });
   }
   if (result.inactive) {
     return fail(res, { status: 401, message: 'Account is not active' });
@@ -44,7 +44,7 @@ async function profile(req, res) {
     include: { addresses: true },
   });
   if (!user) return fail(res, { status: 401, message: 'Unauthorized' });
-  const addresses = (user.addresses || []).map(serializeAddress);
+  const addresses = (user.addresses || []).map(addr => serializeAddress(addr, user));
   const serialized = serializeUserByRole(user, addresses);
   return ok(res, { message: 'Profile fetched', data: serialized });
 }

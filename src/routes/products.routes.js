@@ -56,6 +56,7 @@ router.put(
     Joi.object({
       body: Joi.object({
         name: Joi.string().optional(),
+        categoryId: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
         description: Joi.string().optional(),
         deity: Joi.string().optional(),
         material: Joi.string().optional(),
@@ -74,6 +75,7 @@ router.put(
         tags: Joi.array().items(Joi.string()).optional(),
         status: Joi.string().optional(),
         isFeatured: Joi.boolean().optional(),
+        sellerId: Joi.string().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object({ id: Joi.string().required() }).required(),
