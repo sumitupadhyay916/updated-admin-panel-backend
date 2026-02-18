@@ -11,9 +11,18 @@ const categoriesRoutes = require('./categories.routes');
 const adminCategoriesRoutes = require('./adminCategories.routes');
 const dashboardRoutes = require('./dashboard.routes');
 const supportRoutes = require('./support.routes');
+const publicCatalogRoutes = require('./publicCatalog.routes');
+const consumerRoutes = require('./consumer.routes');
 
 const router = express.Router();
 
+// Public routes (no auth)
+router.use('/public', publicCatalogRoutes);
+
+// Consumer routes (auth required)
+router.use('/consumer', consumerRoutes);
+
+// Admin routes (auth required)
 router.use('/auth', authRoutes);
 router.use('/users', usersRoutes);
 router.use('/sellers', sellersRoutes);

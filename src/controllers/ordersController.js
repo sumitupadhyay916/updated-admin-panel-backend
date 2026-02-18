@@ -20,7 +20,13 @@ async function listOrders(req, res) {
   if (req.query.status) where.orderStatus = String(req.query.status);
   if (req.query.paymentStatus) where.paymentStatus = String(req.query.paymentStatus);
   if (req.query.customerId) where.customerId = String(req.query.customerId);
-  if (req.query.sellerId) where.items = { some: { sellerId: String(req.query.sellerId) } };
+
+  // Seller isolation: sellers can only see orders that include their own items
+  if (req.user?.role === 'seller') {
+    where.items = { some: { sellerId: String(req.user.id) } };
+  } else if (req.query.sellerId) {
+    where.items = { some: { sellerId: String(req.query.sellerId) } };
+  }
 
   if (req.query.startDate || req.query.endDate) {
     where.createdAt = {};
@@ -64,6 +70,14 @@ async function getOrder(req, res) {
     include: { items: true, customer: true, shippingAddress: true, billingAddress: true },
   });
   if (!o) return fail(res, { status: 404, message: 'Order not found' });
+
+  // Seller isolation: sellers can only view orders that contain their items
+  if (req.user?.role === 'seller') {
+    const sellerHasItem = (o.items || []).some((i) => i.sellerId === req.user.id);
+    if (!sellerHasItem) {
+      return fail(res, { status: 403, message: 'Forbidden' });
+    }
+  }
   return ok(res, { message: 'Order fetched', data: serializeOrder(o) });
 }
 

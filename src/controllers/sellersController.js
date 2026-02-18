@@ -376,13 +376,29 @@ async function sellerOrders(req, res) {
   const prisma = getPrisma();
   const { page, limit } = parsePagination(req.query);
 
-  const where = { items: { some: { sellerId: req.params.id } } };
+  const sellerId = req.params.id;
+
+  // Authorization: seller can only access their own orders
+  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+    return fail(res, {
+      status: 403,
+      message: 'You are not allowed to view orders for another seller',
+    });
+  }
+
+  const where = { items: { some: { sellerId } } };
 
   const [total, rows] = await Promise.all([
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      include: { items: true, customer: true, shippingAddress: true, billingAddress: true },
+      include: {
+        customer: true,
+        shippingAddress: true,
+        billingAddress: true,
+        // Only include items for this seller (multi-seller isolation)
+        items: { where: { sellerId } },
+      },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -390,6 +406,104 @@ async function sellerOrders(req, res) {
   ]);
 
   return ok(res, { message: 'Seller orders fetched', data: rows.map(serializeOrder), meta: buildMeta({ page, limit, total }) });
+}
+
+/**
+ * GET /api/sellers/:id/consumers
+ * Returns aggregated list of consumers for a given seller, based on orders
+ * Each consumer entry includes total orders, total spent (for this seller),
+ * and last order/payment/fulfillment status.
+ */
+async function sellerConsumers(req, res) {
+  const prisma = getPrisma();
+  const { page, limit } = parsePagination(req.query);
+  const sellerId = req.params.id;
+
+  // Authorization: a seller can see only their own consumers
+  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+    return fail(res, {
+      status: 403,
+      message: 'You are not allowed to view consumers for another seller',
+    });
+  }
+
+  // Fetch all orders that have at least one item for this seller
+  const orders = await prisma.order.findMany({
+    where: { items: { some: { sellerId } } },
+    include: {
+      customer: true,
+      items: {
+        where: { sellerId },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  // Aggregate by consumer
+  const consumersMap = new Map();
+
+  for (const order of orders) {
+    if (!order.customer) continue;
+
+    const customer = order.customer;
+    const key = customer.id;
+
+    // Calculate amount for this seller in this order
+    const sellerOrderAmount = (order.items || []).reduce(
+      (sum, item) => sum + item.totalPrice,
+      0,
+    );
+
+    if (!consumersMap.has(key)) {
+      consumersMap.set(key, {
+        id: customer.id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone || '',
+        totalOrders: 0,
+        totalSpent: 0,
+        lastOrderId: null,
+        lastOrderNumber: null,
+        lastOrderDate: null,
+        lastPaymentStatus: null,
+        lastFulfillmentStatus: null,
+      });
+    }
+
+    const entry = consumersMap.get(key);
+    entry.totalOrders += 1;
+    entry.totalSpent += sellerOrderAmount;
+
+    // Since orders are sorted desc by createdAt, first encounter is latest
+    if (!entry.lastOrderDate) {
+      entry.lastOrderId = order.id;
+      entry.lastOrderNumber = order.orderNumber;
+      entry.lastOrderDate = order.createdAt.toISOString();
+      entry.lastPaymentStatus = order.paymentStatus;
+      entry.lastFulfillmentStatus = order.fulfillmentStatus;
+    }
+  }
+
+  const allConsumers = Array.from(consumersMap.values());
+
+  // Sort by lastOrderDate desc
+  allConsumers.sort((a, b) => {
+    if (!a.lastOrderDate && !b.lastOrderDate) return 0;
+    if (!a.lastOrderDate) return 1;
+    if (!b.lastOrderDate) return -1;
+    return new Date(b.lastOrderDate).getTime() - new Date(a.lastOrderDate).getTime();
+  });
+
+  const total = allConsumers.length;
+  const start = (page - 1) * limit;
+  const end = start + limit;
+  const rows = allConsumers.slice(start, end);
+
+  return ok(res, {
+    message: 'Seller consumers fetched',
+    data: rows,
+    meta: buildMeta({ page, limit, total }),
+  });
 }
 
 async function sellerPayouts(req, res) {
@@ -444,6 +558,7 @@ module.exports = {
   toggleSellerStatus,
   sellerProducts,
   sellerOrders,
+  sellerConsumers,
   sellerPayouts,
   sellerStats,
 };
