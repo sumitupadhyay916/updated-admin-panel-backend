@@ -1,14 +1,20 @@
 const express = require('express');
 const Joi = require('joi');
+const multer = require('multer');
 
 const { requireAuth, requireRole } = require('../middlewares/auth');
 const { validate } = require('../middlewares/validate');
 const { asyncHandler } = require('../utils/asyncHandler');
 const productsController = require('../controllers/productsController');
+const { uploadImage } = require('../controllers/uploadController');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+router.post('/upload-image', requireAuth, upload.single('image'), asyncHandler(uploadImage));
 
 router.get('/', requireAuth, asyncHandler(productsController.listProducts));
+
 
 router.get('/low-stock', requireAuth, asyncHandler(productsController.lowStock));
 router.get('/pending', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(productsController.pending));
