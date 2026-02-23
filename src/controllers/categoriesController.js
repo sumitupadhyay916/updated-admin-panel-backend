@@ -38,7 +38,7 @@ async function listCategories(req, res) {
         where: { id: user.id },
         select: { adminId: true },
       });
-      
+
       if (seller && seller.adminId) {
         const assignedCategoryIds = await prisma.adminCategory.findMany({
           where: { adminId: seller.adminId },
@@ -86,7 +86,11 @@ async function listCategories(req, res) {
     const categories = rows.map((category) => ({
       id: category.id,
       cid: category.cid,
+      cid: category.cid,
       name: category.name,
+      slug: category.slug,
+      imageUrl: category.imageUrl,
+      description: category.description,
       status: category.status,
       noOfProducts: category.noOfProducts,
       productCount: category._count.products,
@@ -144,7 +148,11 @@ async function getCategory(req, res) {
     data: {
       id: category.id,
       cid: category.cid,
+      cid: category.cid,
       name: category.name,
+      slug: category.slug,
+      imageUrl: category.imageUrl,
+      description: category.description,
       status: category.status,
       noOfProducts: category.noOfProducts,
       productCount: category._count.products,
@@ -183,6 +191,8 @@ async function createCategory(req, res) {
       data: {
         name: name.trim(),
         status: status || 'active',
+        imageUrl: req.body.imageUrl,
+        description: req.body.description,
         noOfProducts: productCount,
       },
       include: {
@@ -198,6 +208,9 @@ async function createCategory(req, res) {
         id: category.id,
         cid: category.cid,
         name: category.name,
+        slug: category.slug,
+        imageUrl: category.imageUrl,
+        description: category.description,
         status: category.status,
         noOfProducts: category.noOfProducts,
         productCount: category._count.products,
@@ -254,6 +267,8 @@ async function updateCategory(req, res) {
       }
       updateData.noOfProducts = productCount;
     }
+    if (req.body.imageUrl !== undefined) updateData.imageUrl = req.body.imageUrl;
+    if (req.body.description !== undefined) updateData.description = req.body.description;
 
     const category = await prisma.category.update({
       where: { id: parseInt(req.params.id, 10) },
@@ -271,6 +286,9 @@ async function updateCategory(req, res) {
         id: category.id,
         cid: category.cid,
         name: category.name,
+        slug: category.slug,
+        imageUrl: category.imageUrl,
+        description: category.description,
         status: category.status,
         noOfProducts: category.noOfProducts,
         productCount: category._count.products,
