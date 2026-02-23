@@ -21,6 +21,8 @@ router.post(
       body: Joi.object({
         name: Joi.string().required(),
         status: Joi.string().valid('active', 'inactive').optional(),
+        imageUrl: Joi.string().allow('', null).optional(),
+        description: Joi.string().allow('', null).optional(),
         noOfProducts: Joi.number().integer().min(0).optional(),
       }).required(),
       query: Joi.object().unknown(true),
@@ -39,6 +41,8 @@ router.put(
       body: Joi.object({
         name: Joi.string().optional(),
         status: Joi.string().valid('active', 'inactive').optional(),
+        imageUrl: Joi.string().allow('', null).optional(),
+        description: Joi.string().allow('', null).optional(),
         noOfProducts: Joi.number().integer().min(0).optional(),
       }).required(),
       query: Joi.object().unknown(true),
