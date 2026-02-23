@@ -31,22 +31,28 @@ router.get('/:id', requireAuth, asyncHandler(couponsController.getCoupon));
 router.post(
   '/',
   requireAuth,
-  requireRole(['super_admin', 'admin']),
+  requireRole(['super_admin', 'admin', 'seller']),
   validate(
     Joi.object({
       body: Joi.object({
+        title: Joi.string().required(),
         code: Joi.string().required(),
-        description: Joi.string().required(),
-        discountType: Joi.string().required(),
+        description: Joi.string().optional().allow(null, ''),
+        discountType: Joi.string().valid('percentage', 'fixed').required(),
         discountValue: Joi.number().required(),
-        minOrderAmount: Joi.number().optional(),
-        maxDiscountAmount: Joi.number().optional(),
-        usageLimit: Joi.number().integer().optional(),
+        minOrderAmount: Joi.number().optional().allow(null),
+        maxDiscountAmount: Joi.number().optional().allow(null),
+        maxSpend: Joi.number().optional().allow(null),
+        isFreeShipping: Joi.boolean().optional(),
+        usageLimit: Joi.number().integer().optional().allow(null),
+        limitPerUser: Joi.number().integer().optional().allow(null),
         startDate: Joi.string().required(),
         endDate: Joi.string().required(),
         applicableTo: Joi.string().optional(),
         sellerIds: Joi.array().items(Joi.string()).optional(),
         productIds: Joi.array().items(Joi.string()).optional(),
+        categoryIds: Joi.array().items(Joi.number()).optional(),
+        isActive: Joi.boolean().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object().unknown(true),
@@ -58,22 +64,28 @@ router.post(
 router.put(
   '/:id',
   requireAuth,
-  requireRole(['super_admin', 'admin']),
+  requireRole(['super_admin', 'admin', 'seller']),
   validate(
     Joi.object({
       body: Joi.object({
+        title: Joi.string().optional(),
         code: Joi.string().optional(),
-        description: Joi.string().optional(),
-        discountType: Joi.string().optional(),
+        description: Joi.string().optional().allow(null, ''),
+        discountType: Joi.string().valid('percentage', 'fixed').optional(),
         discountValue: Joi.number().optional(),
-        minOrderAmount: Joi.number().optional(),
-        maxDiscountAmount: Joi.number().optional(),
-        usageLimit: Joi.number().integer().optional(),
+        minOrderAmount: Joi.number().optional().allow(null),
+        maxDiscountAmount: Joi.number().optional().allow(null),
+        maxSpend: Joi.number().optional().allow(null),
+        isFreeShipping: Joi.boolean().optional(),
+        usageLimit: Joi.number().integer().optional().allow(null),
+        limitPerUser: Joi.number().integer().optional().allow(null),
         startDate: Joi.string().optional(),
         endDate: Joi.string().optional(),
         applicableTo: Joi.string().optional(),
         sellerIds: Joi.array().items(Joi.string()).optional(),
         productIds: Joi.array().items(Joi.string()).optional(),
+        categoryIds: Joi.array().items(Joi.number()).optional(),
+        isActive: Joi.boolean().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object({ id: Joi.string().required() }).required(),
@@ -82,8 +94,8 @@ router.put(
   asyncHandler(couponsController.updateCoupon),
 );
 
-router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(couponsController.deleteCoupon));
-router.post('/:id/toggle', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(couponsController.toggleCoupon));
+router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(couponsController.deleteCoupon));
+router.post('/:id/toggle', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(couponsController.toggleCoupon));
 
 module.exports = router;
 

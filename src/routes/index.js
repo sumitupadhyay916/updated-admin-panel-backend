@@ -13,6 +13,8 @@ const dashboardRoutes = require('./dashboard.routes');
 const supportRoutes = require('./support.routes');
 const publicCatalogRoutes = require('./publicCatalog.routes');
 const consumerRoutes = require('./consumer.routes');
+const abandonedCartsRoutes = require('./abandonedCarts.routes');
+const sellerPoliciesRoutes = require('./sellerPolicies.routes');
 
 const router = express.Router();
 
@@ -34,7 +36,7 @@ router.use('/categories', categoriesRoutes);
 router.use('/admin-categories', adminCategoriesRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/support', supportRoutes);
+router.use('/abandoned-carts', abandonedCartsRoutes);
+router.use('/seller-policies', sellerPoliciesRoutes);
 
 module.exports = router;
-
-

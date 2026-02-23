@@ -224,6 +224,14 @@ model User {
   customerOrders Order[] @relation("CustomerOrders")
   createdCoupons Coupon[] @relation("CouponCreatedBy")
 
+  // Abandoned carts
+  sellerAbandonedCarts AbandonedCart[] @relation("SellerAbandonedCarts")
+  customerAbandonedCarts AbandonedCart[] @relation("CustomerAbandonedCarts")
+
+  // Seller policies
+  sellerPolicy   SellerPolicy?
+  sellerFaqs     SellerFAQ[]
+
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -504,23 +512,29 @@ model Payout {
 
 model Coupon {
   id               String       @id @default(cuid())
+  title            String       @default("")
   code             String       @unique
-  description      String
+  description      String?
   discountType     DiscountType
   discountValue    Float
   minOrderAmount   Float?
   maxDiscountAmount Float?
-  usageLimit       Int?
+  maxSpend         Float?       // Maximum spend restriction
+  isFreeShipping   Boolean      @default(false)
+  usageLimit       Int?         // Total global usage limit
+  limitPerUser     Int?         // Limit per customer
   usageCount       Int          @default(0)
   startDate        DateTime
   endDate          DateTime
   applicableTo     ApplicableTo @default(all)
   sellerIds        String[]     @default([])
   productIds       String[]     @default([])
+  categoryIds      Int[]        @default([]) // Restriction by category
   isActive         Boolean      @default(true)
   createdById      String
   createdBy        User         @relation("CouponCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
   @@index([isActive])
   @@index([startDate, endDate])
@@ -596,4 +610,91 @@ model PlatformSettings {
   updatedAt             DateTime @updatedAt
 }
 
+enum AbandonedCartStatus {
+  abandoned
+  recovered
+  expired
+}
 
+enum EmailStatus {
+  not_sent
+  sent
+  opened
+}
+
+model AbandonedCart {
+  id              String              @id @default(cuid())
+  cartNumber      String              @unique @default(cuid())
+
+  // Customer info (may or may not be a registered user)
+  customerId      String?
+  customer        User?               @relation("CustomerAbandonedCarts", fields: [customerId], references: [id], onDelete: SetNull)
+  customerName    String
+  customerEmail   String
+  customerPhone   String?
+
+  // The seller whose products are in this cart
+  sellerId        String
+  seller          User                @relation("SellerAbandonedCarts", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  cartValue       Float               @default(0)
+  itemCount       Int                 @default(0)
+  status          AbandonedCartStatus @default(abandoned)
+  emailStatus     EmailStatus         @default(not_sent)
+  recoveredAt     DateTime?
+  reminderSentAt  DateTime?
+  couponCode      String?             // Coupon attached to recovery email
+  notes           String?
+
+  items           AbandonedCartItem[]
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([customerEmail])
+  @@index([createdAt])
+}
+
+model AbandonedCartItem {
+  id            String        @id @default(cuid())
+  cartId        String
+  cart          AbandonedCart @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId     String?
+  productName   String
+  productImage  String?
+  quantity      Int           @default(1)
+  unitPrice     Float
+  totalPrice    Float
+
+  @@index([cartId])
+}
+
+
+// --- Seller Policies ---
+
+model SellerPolicy {
+  id              String   @id @default(cuid())
+  sellerId        String   @unique
+  seller          User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  privacyPolicy   String   @default("")
+  termsConditions String   @default("")
+  updatedAt       DateTime @updatedAt
+
+  @@index([sellerId])
+}
+
+model SellerFAQ {
+  id        String   @id @default(cuid())
+  sellerId  String
+  seller    User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  question  String
+  answer    String
+  category  String   @default("General")
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sellerId])
+}

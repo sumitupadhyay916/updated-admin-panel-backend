@@ -36,6 +36,25 @@ function requireRole(roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+// Decodes token if present, but never blocks the request (for guest-friendly endpoints)
+async function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [, token] = authHeader.split(' ');
+  if (!token) return next(); // guest — just continue
+  try {
+    const decoded = verifyToken(token);
+    const prisma = getPrisma();
+    const user = await prisma.user.findUnique({ where: { id: decoded.sub } });
+    if (user && user.status === 'active') {
+      req.user = { id: user.id, role: user.role, name: user.name, email: user.email, phone: user.phone };
+      req.userRecord = user;
+    }
+  } catch {
+    // Invalid token — ignore, treat as guest
+  }
+  return next();
+}
+
+module.exports = { requireAuth, requireRole, optionalAuth };
 
 
