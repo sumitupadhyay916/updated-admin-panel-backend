@@ -86,13 +86,13 @@ async function listCategories(req, res) {
     const categories = rows.map((category) => ({
       id: category.id,
       cid: category.cid,
-      cid: category.cid,
       name: category.name,
       slug: category.slug,
       imageUrl: category.imageUrl,
       description: category.description,
       status: category.status,
-      noOfProducts: category.noOfProducts,
+      // Map real-time count to the field expected by frontend
+      noOfProducts: category._count.products,
       productCount: category._count.products,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,

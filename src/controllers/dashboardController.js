@@ -129,22 +129,89 @@ async function adminDashboard(req, res) {
 
 async function sellerDashboard(req, res) {
   const prisma = getPrisma();
-  const userId = req.user?.id;
-  
-  // Get seller-specific stats
-  const stats = await getStats(userId, req.user?.role);
-  
-  // Get seller's product count
-  const myProductsCount = await prisma.product.count({
-    where: { sellerId: userId },
+  const sellerId = req.user?.id;
+
+  // The correct filter: orders that contain at least one item from this seller
+  const orderWhere = { items: { some: { sellerId } } };
+
+  // Build last 6 months labels
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({
+      label: d.toLocaleString('en-IN', { month: 'short' }),
+      start: new Date(d.getFullYear(), d.getMonth(), 1),
+      end:   new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999),
+    });
+  }
+  const since = months[0].start;
+
+  // Fetch all seller's orders in last 6 months with their items
+  const recentOrders = await prisma.order.findMany({
+    where: { ...orderWhere, createdAt: { gte: since } },
+    select: {
+      id: true,
+      createdAt: true,
+      orderStatus: true,
+      items: {
+        where: { sellerId },
+        select: { totalPrice: true },
+      },
+    },
   });
-  
-  return ok(res, { 
-    message: 'Dashboard fetched', 
+
+  // Build chart data per month from real orders
+  const chartData = months.map(({ label, start, end }) => {
+    const monthOrders = recentOrders.filter(
+      (o) => o.createdAt >= start && o.createdAt <= end
+    );
+    const sales = monthOrders.reduce(
+      (sum, o) => sum + o.items.reduce((s, i) => s + (i.totalPrice || 0), 0),
+      0
+    );
+    return { name: label, sales: Math.round(sales), orders: monthOrders.length };
+  });
+
+  // Aggregate seller stats
+  const [totalOrders, pendingOrders, deliveredOrders, myProducts, seller] = await Promise.all([
+    prisma.order.count({ where: orderWhere }),
+    prisma.order.count({ where: { ...orderWhere, orderStatus: 'pending' } }),
+    prisma.order.count({ where: { ...orderWhere, orderStatus: 'delivered' } }),
+    prisma.product.count({ where: { sellerId } }),
+    prisma.user.findUnique({
+      where: { id: sellerId },
+      select: { totalEarnings: true, availableBalance: true, pendingBalance: true },
+    }),
+  ]);
+
+  // Total reviews across seller's products
+  const reviewAgg = await prisma.product.aggregate({
+    where: { sellerId },
+    _sum: { reviewCount: true },
+    _count: { id: true },
+  });
+
+  // Total revenue: sum of seller's order items (all time)
+  const allItems = await prisma.orderItem.aggregate({
+    where: { sellerId },
+    _sum: { totalPrice: true },
+  });
+  const totalRevenue = Number(allItems._sum.totalPrice || 0);
+
+  return ok(res, {
+    message: 'Seller dashboard fetched',
     data: {
-      ...stats,
-      myProducts: myProductsCount,
-    }
+      totalOrders,
+      pendingOrders,
+      deliveredOrders,
+      myProducts,
+      totalReviews: Number(reviewAgg._sum.reviewCount || 0),
+      totalEarnings:    Number(seller?.totalEarnings    || totalRevenue || 0),
+      availableBalance: Number(seller?.availableBalance || 0),
+      pendingBalance:   Number(seller?.pendingBalance   || 0),
+      chartData,
+    },
   });
 }
 
