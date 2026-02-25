@@ -68,6 +68,7 @@ async function listProducts(req, res) {
         images: true, 
         seller: true,
         category: true,
+        subcategory: true,
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
@@ -85,7 +86,7 @@ async function getProduct(req, res) {
 
   const p = await prisma.product.findUnique({ 
     where: { id: productId }, 
-    include: { images: true, seller: true, category: true } 
+    include: { images: true, seller: true, category: true, subcategory: true } 
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
 
@@ -204,10 +205,25 @@ async function createProduct(req, res) {
     }
   }
 
+  // Resolve subcategory if provided
+  let subcategoryId = null;
+  let subcategorySlug = null;
+  if (req.body.subcategoryId) {
+    const sub = await prisma.subcategory.findUnique({ where: { id: parseInt(req.body.subcategoryId, 10) } });
+    if (!sub) return fail(res, { status: 400, message: 'Invalid subcategory' });
+    if (sub.categoryId !== parseInt(req.body.categoryId, 10)) {
+      return fail(res, { status: 400, message: 'Subcategory does not belong to the selected category' });
+    }
+    subcategoryId = sub.id;
+    subcategorySlug = sub.slug;
+  }
+
   // For super admin simplified creation, use defaults for missing fields
   const productData = {
     sellerId,
     categoryId: parseInt(req.body.categoryId, 10),
+    subcategoryId,
+    subcategorySlug,
     name: req.body.name.trim(),
     description: req.body.description || req.body.name.trim(),
     price: parseFloat(req.body.price),
@@ -232,13 +248,7 @@ async function createProduct(req, res) {
 
   const p = await prisma.product.create({
     data: productData,
-    include: { images: true, seller: true, category: true },
-  });
-
-  // Update category product count
-  await prisma.category.update({
-    where: { id: category.id },
-    data: { noOfProducts: { increment: 1 } },
+    include: { images: true, seller: true, category: true, subcategory: true },
   });
 
   return ok(res, { message: 'Product created', data: serializeProduct(p) });
@@ -318,6 +328,20 @@ async function updateProduct(req, res) {
     updateData.categoryId = parseInt(req.body.categoryId, 10);
   }
 
+  // Handle subcategoryId update
+  if (req.body.subcategoryId !== undefined) {
+    if (req.body.subcategoryId === null || req.body.subcategoryId === '') {
+      // Clear subcategory
+      updateData.subcategoryId = null;
+      updateData.subcategorySlug = null;
+    } else {
+      const sub = await prisma.subcategory.findUnique({ where: { id: parseInt(req.body.subcategoryId, 10) } });
+      if (!sub) return fail(res, { status: 400, message: 'Invalid subcategory' });
+      updateData.subcategoryId = sub.id;
+      updateData.subcategorySlug = sub.slug;
+    }
+  }
+
   // Allow super_admin and admin to change sellerId
   if ((req.user.role === 'super_admin' || req.user.role === 'admin') && req.body.sellerId) {
     const nextSellerId = String(req.body.sellerId);
@@ -341,7 +365,7 @@ async function updateProduct(req, res) {
   const p = await prisma.product.update({
     where: { id: parseInt(req.params.id, 10) },
     data: updateData,
-    include: { images: true, seller: true, category: true },
+    include: { images: true, seller: true, category: true, subcategory: true },
   });
 
   // Replace images if provided
@@ -352,7 +376,7 @@ async function updateProduct(req, res) {
     });
   }
 
-  const refreshed = await prisma.product.findUnique({ where: { id: p.id }, include: { images: true, seller: true } });
+  const refreshed = await prisma.product.findUnique({ where: { id: p.id }, include: { images: true, seller: true, category: true, subcategory: true } });
   return ok(res, { message: 'Product updated', data: serializeProduct(refreshed) });
 }
 
@@ -366,14 +390,6 @@ async function deleteProduct(req, res) {
   if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
   
   await prisma.product.delete({ where: { id: parseInt(req.params.id, 10) } });
-  
-  // Update category product count
-  if (existing.category) {
-    await prisma.category.update({
-      where: { id: existing.category.id },
-      data: { noOfProducts: { decrement: 1 } },
-    });
-  }
   
   return ok(res, { message: 'Product deleted', data: null });
 }

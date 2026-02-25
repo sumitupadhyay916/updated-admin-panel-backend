@@ -274,6 +274,7 @@ model Category {
   status       CategoryStatus @default(active)
   noOfProducts Int            @default(0)
   products     Product[]
+  subcategories Subcategory[]
   assignedAdmins AdminCategory[]
   sellerCategories SellerCategory[]
 
@@ -283,6 +284,22 @@ model Category {
   @@index([status])
   @@index([name])
   @@index([cid])
+  @@index([slug])
+}
+
+model Subcategory {
+  id          Int       @id @default(autoincrement())
+  name        String
+  slug        String    @unique
+  description String?
+  categoryId  Int
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  products    Product[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([categoryId])
   @@index([slug])
 }
 
@@ -342,6 +359,7 @@ model Product {
   isFeatured       Boolean       @default(false)
   tags             String[]      @default([])
   subcategorySlug  String?
+  subcategoryId    Int?
   metadata         Json?
 
   sellerId         String
@@ -349,6 +367,8 @@ model Product {
 
   categoryId       Int
   category         Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  subcategory      Subcategory?  @relation(fields: [subcategoryId], references: [id], onDelete: SetNull)
 
   images           ProductImage[]
   inventoryMovements InventoryMovement[]
@@ -363,6 +383,7 @@ model Product {
   @@index([categoryId])
   @@index([pid])
   @@index([subcategorySlug])
+  @@index([subcategoryId])
 }
 
 model ProductImage {

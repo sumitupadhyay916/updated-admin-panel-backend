@@ -15,11 +15,13 @@ const publicCatalogRoutes = require('./publicCatalog.routes');
 const consumerRoutes = require('./consumer.routes');
 const abandonedCartsRoutes = require('./abandonedCarts.routes');
 const sellerPoliciesRoutes = require('./sellerPolicies.routes');
+const subcategoriesRoutes = require('./subcategories.routes');
 
 const router = express.Router();
 
 // Public routes (no auth)
 router.use('/public', publicCatalogRoutes);
+router.use('/subcategories', subcategoriesRoutes);
 
 // Consumer routes (auth required)
 router.use('/consumer', consumerRoutes);

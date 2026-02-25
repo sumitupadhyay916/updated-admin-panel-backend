@@ -13,51 +13,32 @@ async function getPublicCategories(req, res) {
     const categories = await prisma.category.findMany({
       where: { status: 'active' },
       include: {
-        products: {
-          where: { stock: 'available' },
-          select: { subcategorySlug: true }
-        }
+        subcategories: {
+          orderBy: { name: 'asc' },
+          include: {
+            _count: { select: { products: { where: { stock: 'available' } } } }
+          }
+        },
+        _count: { select: { products: { where: { stock: 'available' } } } }
       },
       orderBy: { name: 'asc' }
     });
 
     // Transform to moms-love shape
-    const transformed = categories.map(cat => {
-      // Group products by subcategorySlug to build subcategories
-      const subcategoryMap = new Map();
-      
-      cat.products.forEach(product => {
-        if (product.subcategorySlug) {
-          const slug = product.subcategorySlug;
-          if (!subcategoryMap.has(slug)) {
-            // Convert slug to title case for name
-            const name = slug
-              .split('-')
-              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-              .join(' ');
-            
-            subcategoryMap.set(slug, {
-              id: slug,
-              name: name,
-              slug: slug,
-              count: 0
-            });
-          }
-          subcategoryMap.get(slug).count++;
-        }
-      });
-
-      const subcategories = Array.from(subcategoryMap.values());
-
-      return {
-        id: cat.slug || cat.cid,
-        name: cat.name,
-        slug: cat.slug || cat.cid,
-        image: cat.imageUrl || null,
-        description: cat.description || null,
-        subcategories: subcategories
-      };
-    });
+    const transformed = categories.map(cat => ({
+      id: cat.slug || cat.cid,
+      name: cat.name,
+      slug: cat.slug || cat.cid,
+      image: cat.imageUrl || null,
+      description: cat.description || null,
+      productCount: cat._count.products,
+      subcategories: cat.subcategories.map(sub => ({
+        id: sub.slug,
+        name: sub.name,
+        slug: sub.slug,
+        count: sub._count.products,
+      }))
+    }));
 
     return ok(res, { message: 'Categories fetched', data: transformed });
   } catch (error) {
@@ -95,18 +76,36 @@ async function getPublicProducts(req, res) {
       }
     }
 
-    // Filter by subcategory slug
+    // Filter by subcategory slug — check both subcategoryId (relational) and subcategorySlug (legacy)
     if (req.query.subcategorySlug) {
-      where.subcategorySlug = req.query.subcategorySlug;
+      const sub = await prisma.subcategory.findFirst({
+        where: { slug: req.query.subcategorySlug }
+      });
+      if (sub) {
+        // Use AND wrapper so it doesn't conflict with the search OR filter below
+        if (!where.AND) where.AND = [];
+        where.AND.push({
+          OR: [
+            { subcategoryId: sub.id },
+            { subcategorySlug: req.query.subcategorySlug }
+          ]
+        });
+      } else {
+        // No subcategory found with that slug — return empty
+        return ok(res, { message: 'Products fetched', data: [], meta: { page, limit, total: 0, totalPages: 0 } });
+      }
     }
 
-    // Search query
+    // Search query — wrapped in AND to safely compose with subcategory filter
     if (req.query.q) {
-      where.OR = [
-        { name: { contains: req.query.q, mode: 'insensitive' } },
-        { description: { contains: req.query.q, mode: 'insensitive' } },
-        { tags: { has: req.query.q } }
-      ];
+      if (!where.AND) where.AND = [];
+      where.AND.push({
+        OR: [
+          { name: { contains: req.query.q, mode: 'insensitive' } },
+          { description: { contains: req.query.q, mode: 'insensitive' } },
+          { tags: { has: req.query.q } }
+        ]
+      });
     }
 
     // Filter flags - Note: Prisma JSON filtering is complex, we'll filter in memory for now
@@ -122,6 +121,7 @@ async function getPublicProducts(req, res) {
         include: {
           images: { orderBy: { sortOrder: 'asc' } },
           category: true,
+          subcategory: true,
           seller: { select: { id: true, name: true, businessName: true } }
         },
         orderBy: { createdAt: 'desc' },
@@ -136,6 +136,7 @@ async function getPublicProducts(req, res) {
       const images = product.images.map(img => img.url);
       
       return {
+        isFeatured: product.isFeatured || false,
         id: product.pid,
         name: product.name,
         description: product.description || '',
@@ -146,7 +147,7 @@ async function getPublicProducts(req, res) {
           : null,
         images: images.length > 0 ? images : ['/images/placeholder.jpg'],
         category: product.category.slug || product.category.cid,
-        subcategory: product.subcategorySlug || null,
+        subcategory: product.subcategory?.slug || product.subcategorySlug || null,
         brand: metadata.brand || product.seller.businessName || product.seller.name,
         sizes: metadata.sizes || [],
         ageGroups: metadata.ageGroups || [],
@@ -225,7 +226,7 @@ async function getPublicProductByPid(req, res) {
         : null,
       images: images.length > 0 ? images : ['/images/placeholder.jpg'],
       category: product.category.slug || product.category.cid,
-      subcategory: product.subcategorySlug || null,
+      subcategory: product.subcategory?.slug || product.subcategorySlug || null,
       brand: metadata.brand || product.seller.businessName || product.seller.name,
       sizes: metadata.sizes || [],
       ageGroups: metadata.ageGroups || [],
