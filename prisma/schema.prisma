@@ -354,6 +354,7 @@ model Product {
   price            Float
   comparePrice     Float?
   stock            StockStatus   @default(available)
+  stockQuantity    Int           @default(0)
   lowStockThreshold Int          @default(5)
   reviewCount      Int           @default(0)
   isFeatured       Boolean       @default(false)

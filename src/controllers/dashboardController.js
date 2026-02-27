@@ -7,8 +7,6 @@ const { serializePayout } = require('../serializers/payoutSerializer');
 async function getStats(userId = null, userRole = null) {
   const prisma = getPrisma();
 
-  console.log('[Dashboard] Starting to fetch stats for user:', userId, 'role:', userRole);
-
   const [
     totalOrders,
     totalProducts,
@@ -30,14 +28,6 @@ async function getStats(userId = null, userRole = null) {
     prisma.contactQuery.count({ where: { status: { in: ['open', 'in_progress'] } } }),
     prisma.order.aggregate({ _sum: { totalAmount: true } }),
   ]);
-
-  console.log('[Dashboard] Raw counts:', {
-    totalOrders,
-    totalProducts,
-    totalCustomers,
-    totalSellers,
-    totalAdmins,
-  });
 
   // Note: Product model uses 'stock' enum (available/unavailable), not stockQuantity
   // For low stock, we'll just count unavailable products
@@ -91,8 +81,6 @@ async function getStats(userId = null, userRole = null) {
     customersChange: 5.1,
   };
 
-  console.log('[Dashboard] Final stats object:', stats);
-
   return stats;
 }
 
@@ -106,11 +94,7 @@ function makeSeries(names, key, total) {
 }
 
 async function superAdminDashboard(req, res) {
-  console.log('[Dashboard] Super Admin endpoint called at:', new Date().toISOString());
-  console.log('[Dashboard] User:', req.user?.email, 'Role:', req.user?.role);
-  
   const stats = await getStats(req.user?.id, req.user?.role);
-  console.log('[Dashboard] Super Admin stats:', stats);
   
   // Add version to verify new code is loaded
   const response = {

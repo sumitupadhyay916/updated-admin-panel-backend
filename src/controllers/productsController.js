@@ -31,14 +31,11 @@ async function listProducts(req, res) {
       select: { categoryId: true },
     });
     const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-    console.log(`[Products] Admin ${user.id} has assigned categories:`, categoryIds);
     if (categoryIds.length > 0) {
       // If a specific categoryId is requested, verify it's in the assigned list
       if (req.query.categoryId) {
         const requestedCategoryId = parseInt(req.query.categoryId, 10);
         if (!categoryIds.includes(requestedCategoryId)) {
-          // Admin doesn't have access to this category
-          console.log(`[Products] Admin ${user.id} requested category ${requestedCategoryId} but doesn't have access`);
           return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
         }
         where.categoryId = requestedCategoryId;
@@ -47,13 +44,9 @@ async function listProducts(req, res) {
         where.categoryId = { in: categoryIds };
       }
     } else {
-      // Admin has no categories assigned, return empty
-      console.log(`[Products] Admin ${user.id} has no categories assigned, returning empty`);
       return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
   } else if (user && user.role === 'seller') {
-    // Sellers can only see their own products
-    console.log(`[Products] Seller ${user.id} filtering by sellerId`);
     where.sellerId = user.id;
   } else if (req.query.categoryId) {
     // For super_admin or other roles, allow specific categoryId filter
@@ -218,6 +211,14 @@ async function createProduct(req, res) {
     subcategorySlug = sub.slug;
   }
 
+  // Parse initial stock quantity - CRITICAL for inventory tracking
+  const initialStockQuantity = req.body.stockQuantity !== undefined 
+    ? parseInt(req.body.stockQuantity, 10) 
+    : 0;
+  
+  // Auto-set stock status based on quantity
+  const stockStatus = initialStockQuantity > 0 ? 'available' : 'unavailable';
+
   // For super admin simplified creation, use defaults for missing fields
   const productData = {
     sellerId,
@@ -227,7 +228,8 @@ async function createProduct(req, res) {
     name: req.body.name.trim(),
     description: req.body.description || req.body.name.trim(),
     price: parseFloat(req.body.price),
-    stock: req.body.stock,
+    stock: req.body.stock || stockStatus,
+    stockQuantity: initialStockQuantity,
     // Default values for required fields
     deity: req.body.deity || 'Other',
     material: req.body.material || 'Brass',
@@ -542,3 +544,397 @@ module.exports = {
 };
 
 
+
+
+// ============================================
+// INVENTORY MANAGEMENT ENDPOINTS
+// ============================================
+
+async function getInventoryStats(req, res) {
+  const prisma = getPrisma();
+  const user = req.user;
+  
+  // Build where clause based on user role
+  const where = {};
+  if (user.role === 'seller') {
+    where.sellerId = user.id;
+  } else if (user.role === 'admin') {
+    const assignedCategoryIds = await prisma.adminCategory.findMany({
+      where: { adminId: user.id },
+      select: { categoryId: true },
+    });
+    const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
+    if (categoryIds.length > 0) {
+      where.categoryId = { in: categoryIds };
+    } else {
+      return ok(res, {
+        message: 'Inventory stats fetched',
+        data: {
+          totalProducts: 0,
+          totalStockQuantity: 0,
+          deliveredQuantity: 0,
+          reservedQuantity: 0,
+          shippingQuantity: 0,
+          lowStockProducts: 0,
+        },
+      });
+    }
+  }
+
+  // Get all products for this seller/admin
+  const products = await prisma.product.findMany({
+    where,
+    select: { id: true, stockQuantity: true, lowStockThreshold: true, stock: true },
+  });
+
+  const productIds = products.map(p => p.id);
+  const totalProducts = products.length;
+  
+  // Sum total stock quantity across all products
+  const totalStockQuantity = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
+  
+  // Count low stock products (where stockQuantity < lowStockThreshold)
+  const lowStockProducts = products.filter(p => 
+    (p.stockQuantity || 0) < (p.lowStockThreshold || 5)
+  ).length;
+
+  // Sum delivered quantities (products in delivered orders)
+  const deliveredResult = await prisma.orderItem.aggregate({
+    where: {
+      productId: { in: productIds },
+      order: { orderStatus: 'delivered' },
+    },
+    _sum: { quantity: true },
+  });
+
+  // Sum reserved quantities (products in abandoned carts)
+  const reservedResult = await prisma.abandonedCartItem.aggregate({
+    where: {
+      productId: { in: productIds.map(String) },
+      cart: { status: 'abandoned' },
+    },
+    _sum: { quantity: true },
+  });
+
+  // Sum shipping quantities (products in pending/processing/shipped orders ONLY)
+  // EXCLUDE cancelled, returned, and delivered orders
+  const shippingResult = await prisma.orderItem.aggregate({
+    where: {
+      productId: { in: productIds },
+      order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
+    },
+    _sum: { quantity: true },
+  });
+
+  const stats = {
+    totalProducts,
+    totalStockQuantity,
+    deliveredQuantity: Number(deliveredResult._sum.quantity || 0),
+    reservedQuantity: Number(reservedResult._sum.quantity || 0),
+    shippingQuantity: Number(shippingResult._sum.quantity || 0),
+    lowStockProducts,
+  };
+
+  // AUTO-UPDATE STOCK STATUS: Update products where available stock = 0 to unavailable
+  for (const product of products) {
+    const reserved = await prisma.abandonedCartItem.aggregate({
+      where: {
+        productId: String(product.id),
+        cart: { status: 'abandoned' },
+      },
+      _sum: { quantity: true },
+    });
+
+    const shipping = await prisma.orderItem.aggregate({
+      where: {
+        productId: product.id,
+        order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
+      },
+      _sum: { quantity: true },
+    });
+
+    const reservedQty = Number(reserved._sum.quantity || 0);
+    const shippingQty = Number(shipping._sum.quantity || 0);
+    const availableStock = Math.max(0, (product.stockQuantity || 0) - reservedQty - shippingQty);
+
+    const shouldBeAvailable = availableStock > 0;
+    const currentStatus = product.stock;
+    const newStatus = shouldBeAvailable ? 'available' : 'unavailable';
+
+    if (currentStatus !== newStatus) {
+      await prisma.product.update({
+        where: { id: product.id },
+        data: { stock: newStatus },
+      });
+    }
+  }
+
+  return ok(res, {
+    message: 'Inventory stats fetched',
+    data: stats,
+  });
+}
+
+async function updateProductStock(req, res) {
+  const prisma = getPrisma();
+  const productId = parseInt(req.params.id, 10);
+  const { adjustment } = req.body; // +5, +10, +20, or custom number
+
+  if (adjustment === undefined || typeof adjustment !== 'number') {
+    return fail(res, { status: 400, message: 'Adjustment value is required' });
+  }
+
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: { category: true },
+  });
+
+  if (!product) {
+    return fail(res, { status: 404, message: 'Product not found' });
+  }
+
+  // Authorization check
+  if (req.user.role === 'seller' && product.sellerId !== req.user.id) {
+    return fail(res, { status: 403, message: 'Forbidden' });
+  }
+
+  if (req.user.role === 'admin') {
+    const hasAccess = await prisma.adminCategory.findFirst({
+      where: {
+        adminId: req.user.id,
+        categoryId: product.categoryId,
+      },
+    });
+    if (!hasAccess) {
+      return fail(res, { status: 403, message: 'You do not have access to this product' });
+    }
+  }
+
+  // Calculate new stock quantity
+  const previousQuantity = product.stockQuantity || 0;
+  const newQuantity = Math.max(0, previousQuantity + adjustment);
+  
+  // Auto-update stock status based on quantity
+  const newStock = newQuantity > 0 ? 'available' : 'unavailable';
+
+  const updated = await prisma.product.update({
+    where: { id: productId },
+    data: { 
+      stockQuantity: newQuantity,
+      stock: newStock,
+    },
+    include: { images: true, seller: true, category: true, subcategory: true },
+  });
+
+  // Create inventory movement record
+  await prisma.inventoryMovement.create({
+    data: {
+      productId,
+      type: adjustment > 0 ? 'in' : adjustment < 0 ? 'out' : 'adjustment',
+      quantity: Math.abs(adjustment),
+      previousStock: previousQuantity,
+      newStock: newQuantity,
+      reason: 'Manual stock adjustment',
+      notes: `Stock adjusted by ${adjustment > 0 ? '+' : ''}${adjustment}`,
+      createdById: req.user.id,
+    },
+  });
+
+  return ok(res, {
+    message: 'Stock updated successfully',
+    data: serializeProduct(updated),
+  });
+}
+
+async function getProductInventoryDetails(req, res) {
+  const prisma = getPrisma();
+  const productId = parseInt(req.params.id, 10);
+
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+    },
+  });
+
+  if (!product) {
+    return fail(res, { status: 404, message: 'Product not found' });
+  }
+
+  // Authorization check
+  if (req.user.role === 'seller' && product.sellerId !== req.user.id) {
+    return fail(res, { status: 403, message: 'Forbidden' });
+  }
+
+  if (req.user.role === 'admin') {
+    const hasAccess = await prisma.adminCategory.findFirst({
+      where: {
+        adminId: req.user.id,
+        categoryId: product.categoryId,
+      },
+    });
+    if (!hasAccess) {
+      return fail(res, { status: 403, message: 'You do not have access to this product' });
+    }
+  }
+
+  // Get inventory details - sum quantities for this specific product
+  const [deliveredCount, inCartCount, inShippingCount] = await Promise.all([
+    // Delivered quantity
+    prisma.orderItem.aggregate({
+      where: {
+        productId,
+        order: { orderStatus: 'delivered' },
+      },
+      _sum: { quantity: true },
+    }),
+    // In cart quantity (abandoned carts)
+    prisma.abandonedCartItem.aggregate({
+      where: {
+        productId: String(productId),
+        cart: { status: 'abandoned' },
+      },
+      _sum: { quantity: true },
+    }),
+    // In shipping/processing/pending quantity (EXCLUDES cancelled, returned, delivered)
+    prisma.orderItem.aggregate({
+      where: {
+        productId,
+        order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
+      },
+      _sum: { quantity: true },
+    }),
+  ]);
+
+  const deliveredQuantity = Number(deliveredCount._sum.quantity || 0);
+  const reservedQuantity = Number(inCartCount._sum.quantity || 0);
+  const shippingQuantity = Number(inShippingCount._sum.quantity || 0);
+  const totalStock = product.stockQuantity || 0;
+  
+  const availableStock = Math.max(0, totalStock - reservedQuantity - shippingQuantity-deliveredQuantity);
+
+  return ok(res, {
+    message: 'Product inventory details fetched',
+    data: {
+      ...serializeProduct(product),
+      totalStock,
+      availableStock,
+      deliveredQuantity,
+      reservedQuantity,
+      shippingQuantity,
+    },
+  });
+}
+
+async function getCartDetails(req, res) {
+  const prisma = getPrisma();
+  const user = req.user;
+  
+  // Build where clause based on user role
+  const where = {};
+  if (user.role === 'seller') {
+    where.sellerId = user.id;
+  } else if (user.role === 'admin') {
+    const assignedCategoryIds = await prisma.adminCategory.findMany({
+      where: { adminId: user.id },
+      select: { categoryId: true },
+    });
+    const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
+    if (categoryIds.length > 0) {
+      where.categoryId = { in: categoryIds };
+    } else {
+      return ok(res, {
+        message: 'Cart details fetched',
+        data: [],
+      });
+    }
+  }
+
+  // Get all products for this seller/admin
+  const products = await prisma.product.findMany({
+    where,
+    include: {
+      images: {
+        take: 1,
+        orderBy: { sortOrder: 'asc' },
+      },
+    },
+  });
+
+  const productIds = products.map(p => p.id);
+
+  // Get all abandoned cart items for these products
+  const cartItems = await prisma.abandonedCartItem.findMany({
+    where: {
+      productId: { in: productIds.map(String) },
+      cart: { status: 'abandoned' },
+    },
+    include: {
+      cart: {
+        select: {
+          id: true,
+          customerId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  });
+
+  // Group by product and aggregate
+  const cartDetails = [];
+  for (const product of products) {
+    const items = cartItems.filter(item => item.productId === String(product.id));
+    
+    if (items.length > 0) {
+      const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+      const uniqueCarts = new Set(items.map(item => item.cart.id)).size;
+      
+      cartDetails.push({
+        productId: product.id,
+        productPid: product.pid,
+        productName: product.name,
+        productImage: product.images && product.images.length > 0 ? product.images[0].url : null,
+        productPrice: product.price,
+        reservedQuantity: totalQuantity,
+        numberOfCarts: uniqueCarts,
+        carts: items.map(item => ({
+          cartId: item.cart.id,
+          userId: item.cart.customerId,
+          quantity: item.quantity,
+          addedAt: item.cart.createdAt.toISOString(),
+          updatedAt: item.cart.updatedAt.toISOString(),
+        })),
+      });
+    }
+  }
+
+  // Sort by reserved quantity descending
+  cartDetails.sort((a, b) => b.reservedQuantity - a.reservedQuantity);
+
+  return ok(res, {
+    message: 'Cart details fetched',
+    data: cartDetails,
+  });
+}
+
+module.exports = {
+  listProducts,
+  getProduct,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  approveProduct,
+  rejectProduct,
+  updateStock,
+  inventory,
+  lowStock,
+  pending,
+  getInventoryStats,
+  updateProductStock,
+  getProductInventoryDetails,
+  getCartDetails,
+};
