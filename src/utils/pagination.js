@@ -15,7 +15,7 @@ function buildMeta({ page, limit, total }) {
     total,
     totalPages,
     hasNext: page < totalPages,
-    hasPrev: page > 1,
+    hasPrev: page > 1, 
   };
 }
 

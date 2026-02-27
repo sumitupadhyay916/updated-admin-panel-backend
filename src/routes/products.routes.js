@@ -127,6 +127,12 @@ router.post(
 
 router.get('/:id/inventory', requireAuth, asyncHandler(productsController.inventory));
 
+// Inventory management endpoints
+router.get('/inventory/stats', requireAuth, asyncHandler(productsController.getInventoryStats));
+router.get('/inventory/cart-details', requireAuth, asyncHandler(productsController.getCartDetails));
+router.get('/:id/inventory-details', requireAuth, asyncHandler(productsController.getProductInventoryDetails));
+router.post('/:id/adjust-stock', requireAuth, asyncHandler(productsController.updateProductStock));
+
 module.exports = router;
 
 
