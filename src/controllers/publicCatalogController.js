@@ -152,7 +152,7 @@ async function getPublicProducts(req, res) {
         sizes: metadata.sizes || [],
         ageGroups: metadata.ageGroups || [],
         colors: metadata.colors || [],
-        stock: metadata.stock !== undefined ? metadata.stock : (product.stock === 'available' ? 1 : 0),
+        stock: product.stockQuantity || 0,
         rating: metadata.rating || product.reviewCount > 0 ? 4.5 : 0,
         reviews: metadata.reviews || product.reviewCount || 0,
         tags: product.tags || [],
@@ -215,6 +215,29 @@ async function getPublicProductByPid(req, res) {
     const metadata = product.metadata || {};
     const images = product.images.map(img => img.url);
 
+    // CRITICAL: Calculate available stock (total - reserved - shipping)
+    const [reservedResult, shippingResult] = await Promise.all([
+      prisma.abandonedCartItem.aggregate({
+        where: {
+          productId: String(product.id),
+          cart: { status: 'abandoned' },
+        },
+        _sum: { quantity: true },
+      }),
+      prisma.orderItem.aggregate({
+        where: {
+          productId: product.id,
+          order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
+        },
+        _sum: { quantity: true },
+      }),
+    ]);
+
+    const reservedQty = Number(reservedResult._sum.quantity || 0);
+    const shippingQty = Number(shippingResult._sum.quantity || 0);
+    const totalStock = product.stockQuantity || 0;
+    const availableStock = Math.max(0, totalStock - reservedQty - shippingQty);
+
     const transformed = {
       id: product.pid,
       name: product.name,
@@ -231,7 +254,7 @@ async function getPublicProductByPid(req, res) {
       sizes: metadata.sizes || [],
       ageGroups: metadata.ageGroups || [],
       colors: metadata.colors || [],
-      stock: metadata.stock !== undefined ? metadata.stock : (product.stock === 'available' ? 1 : 0),
+      stock: availableStock, // Send available stock, not total stock
       rating: metadata.rating || product.reviewCount > 0 ? 4.5 : 0,
       reviews: metadata.reviews || product.reviewCount || 0,
       tags: product.tags || [],
