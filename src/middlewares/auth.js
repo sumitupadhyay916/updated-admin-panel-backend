@@ -13,14 +13,22 @@ async function requireAuth(req, res, next) {
   try {
     const decoded = verifyToken(token);
     const prisma = getPrisma();
-    const user = await prisma.user.findUnique({ where: { id: decoded.sub } });
+    const user = await prisma.user.findUnique({ 
+      where: { id: decoded.sub },
+      include: { staffProfile: true }
+    });
     if (!user) {
       return fail(res, { status: 401, message: 'Unauthorized' });
     }
     if (user.status !== 'active') {
       return fail(res, { status: 401, message: 'Account is not active' });
     }
-    req.user = { id: user.id, role: user.role };
+    req.user = { id: user.id, role: user.role, staffProfile: user.staffProfile };
+    if (user.role === 'seller') {
+      req.user.sellerId = user.id;
+    } else if (user.role === 'staff' && user.staffProfile) {
+      req.user.sellerId = user.staffProfile.sellerId;
+    }
     req.userRecord = user;
     return next();
   } catch (e) {
@@ -44,9 +52,17 @@ async function optionalAuth(req, res, next) {
   try {
     const decoded = verifyToken(token);
     const prisma = getPrisma();
-    const user = await prisma.user.findUnique({ where: { id: decoded.sub } });
+    const user = await prisma.user.findUnique({ 
+      where: { id: decoded.sub },
+      include: { staffProfile: true }
+    });
     if (user && user.status === 'active') {
-      req.user = { id: user.id, role: user.role, name: user.name, email: user.email, phone: user.phone };
+      req.user = { id: user.id, role: user.role, name: user.name, email: user.email, phone: user.phone, staffProfile: user.staffProfile };
+      if (user.role === 'seller') {
+        req.user.sellerId = user.id;
+      } else if (user.role === 'staff' && user.staffProfile) {
+        req.user.sellerId = user.staffProfile.sellerId;
+      }
       req.userRecord = user;
     }
   } catch {

@@ -4,9 +4,18 @@ const { signToken } = require('../utils/jwt');
 
 async function login({ email, password, role }) {
   const prisma = getPrisma();
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({ 
+    where: { email },
+    include: { staffProfile: true }
+  });
   if (!user) return null;
-  if (role && user.role !== role) return null;
+  if (role) {
+    if (role === 'seller' && user.role === 'staff') {
+      // Allow staff to login via the seller portal
+    } else if (user.role !== role) {
+      return null;
+    }
+  }
   const ok = await comparePassword(password, user.passwordHash);
   if (!ok) return null;
   if (user.status !== 'active') return { user, token: null, inactive: true };

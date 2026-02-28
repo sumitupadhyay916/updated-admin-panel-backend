@@ -379,7 +379,7 @@ async function sellerOrders(req, res) {
   const sellerId = req.params.id;
 
   // Authorization: seller can only access their own orders
-  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+  if (['seller', 'staff'].includes(req.user.role) && req.user.sellerId !== sellerId) {
     return fail(res, {
       status: 403,
       message: 'You are not allowed to view orders for another seller',
@@ -420,7 +420,7 @@ async function sellerConsumers(req, res) {
   const sellerId = req.params.id;
 
   // Authorization: a seller can see only their own consumers
-  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+  if (['seller', 'staff'].includes(req.user.role) && req.user.sellerId !== sellerId) {
     return fail(res, {
       status: 403,
       message: 'You are not allowed to view consumers for another seller',

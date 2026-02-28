@@ -35,7 +35,7 @@ const updateCartSchema = Joi.object({
 // ===========================================================
 async function listAbandonedCarts(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const {
       page = 1,
       limit = 10,
@@ -120,7 +120,7 @@ async function listAbandonedCarts(req, res) {
 // ===========================================================
 async function getAbandonedCart(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const { id } = req.params;
 
     const cart = await prisma.abandonedCart.findFirst({
@@ -144,7 +144,7 @@ async function getAbandonedCart(req, res) {
 // ===========================================================
 async function createAbandonedCart(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
 
     const { error, value } = createCartSchema.validate(req.body, { abortEarly: false });
     if (error) {
@@ -193,7 +193,7 @@ async function createAbandonedCart(req, res) {
 // ===========================================================
 async function updateAbandonedCart(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const { id } = req.params;
 
     const existing = await prisma.abandonedCart.findFirst({ where: { id, sellerId } });
@@ -238,7 +238,7 @@ async function updateAbandonedCart(req, res) {
 // ===========================================================
 async function deleteAbandonedCart(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const { id } = req.params;
 
     const existing = await prisma.abandonedCart.findFirst({ where: { id, sellerId } });
@@ -260,7 +260,7 @@ async function deleteAbandonedCart(req, res) {
 // ===========================================================
 async function sendReminder(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const { id } = req.params;
 
     const cart = await prisma.abandonedCart.findFirst({ where: { id, sellerId } });
@@ -291,7 +291,7 @@ async function sendReminder(req, res) {
 // ===========================================================
 async function markExpired(req, res) {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
     const { id } = req.params;
 
     const cart = await prisma.abandonedCart.findFirst({ where: { id, sellerId } });

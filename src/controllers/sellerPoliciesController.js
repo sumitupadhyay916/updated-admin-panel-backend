@@ -4,7 +4,7 @@ const { ok, fail } = require('../utils/apiResponse');
 // ─── Seller: Get My Policies ──────────────────────────────────────────────────
 async function getMyPolicies(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   try {
     let policy = await prisma.sellerPolicy.findUnique({ where: { sellerId } });
     if (!policy) {
@@ -23,7 +23,7 @@ async function getMyPolicies(req, res) {
 // ─── Seller: Update My Policies ───────────────────────────────────────────────
 async function updateMyPolicies(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   const { privacyPolicy, termsConditions } = req.body;
   try {
     const policy = await prisma.sellerPolicy.upsert({
@@ -48,7 +48,7 @@ async function updateMyPolicies(req, res) {
 // ─── Seller: Get My FAQs ──────────────────────────────────────────────────────
 async function getMyFAQs(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   try {
     const faqs = await prisma.sellerFAQ.findMany({
       where: { sellerId },
@@ -64,7 +64,7 @@ async function getMyFAQs(req, res) {
 // ─── Seller: Create FAQ ───────────────────────────────────────────────────────
 async function createMyFAQ(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   const { question, answer, category = 'General', order = 0 } = req.body;
   try {
     if (!question || !answer) {
@@ -83,7 +83,7 @@ async function createMyFAQ(req, res) {
 // ─── Seller: Update FAQ ───────────────────────────────────────────────────────
 async function updateMyFAQ(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   const { id } = req.params;
   const { question, answer, category, order } = req.body;
   try {
@@ -109,7 +109,7 @@ async function updateMyFAQ(req, res) {
 // ─── Seller: Delete FAQ ───────────────────────────────────────────────────────
 async function deleteMyFAQ(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user.id;
+  const sellerId = req.user.sellerId || req.user.id;
   const { id } = req.params;
   try {
     const existing = await prisma.sellerFAQ.findFirst({ where: { id, sellerId } });

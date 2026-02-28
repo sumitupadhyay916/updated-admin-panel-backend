@@ -61,10 +61,10 @@ router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin']), asyncH
 router.post('/:id/toggle-status', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(sellersController.toggleSellerStatus));
 
 router.get('/:id/products', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(sellersController.sellerProducts));
-router.get('/:id/orders', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerOrders));
-router.get('/:id/consumers', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerConsumers));
-router.get('/:id/payouts', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerPayouts));
-router.get('/:id/stats', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerStats));
+router.get('/:id/orders', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerOrders));
+router.get('/:id/consumers', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerConsumers));
+router.get('/:id/payouts', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerPayouts));
+router.get('/:id/stats', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerStats));
 
 module.exports = router;
 

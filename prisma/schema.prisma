@@ -15,6 +15,7 @@ enum UserRole {
   super_admin
   admin
   seller
+  staff
   consumer
 }
 
@@ -231,6 +232,10 @@ model User {
   // Seller policies
   sellerPolicy   SellerPolicy?
   sellerFaqs     SellerFAQ[]
+
+  // Staff relationships
+  staffProfile   Staff?    @relation("StaffUserProfile")
+  sellerStaff    Staff[]   @relation("SellerStaff")
 
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
@@ -719,3 +724,23 @@ model SellerFAQ {
 
   @@index([sellerId])
 }
+
+// --- Staff Management ---
+
+model Staff {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation("StaffUserProfile", fields: [userId], references: [id], onDelete: Cascade)
+  
+  sellerId    String
+  seller      User     @relation("SellerStaff", fields: [sellerId], references: [id], onDelete: Cascade)
+  
+  role        String
+  permissions String[] @default([])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sellerId])
+}
+

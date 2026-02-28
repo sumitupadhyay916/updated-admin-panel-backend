@@ -8,7 +8,7 @@ const ctrl = require('../controllers/sellerPoliciesController');
 const router = express.Router();
 
 // ─── Seller-authenticated routes ─────────────────────────────────────────────
-const sellerRoles = ['seller', 'admin', 'super_admin'];
+const sellerRoles = ['seller', 'staff', 'admin', 'super_admin'];
 
 router.get('/my', requireAuth, requireRole(sellerRoles), asyncHandler(ctrl.getMyPolicies));
 

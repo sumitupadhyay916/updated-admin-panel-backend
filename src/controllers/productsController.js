@@ -51,10 +51,10 @@ async function listProducts(req, res) {
       console.log(`[Products] Admin ${user.id} has no categories assigned, returning empty`);
       return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
-  } else if (user && user.role === 'seller') {
-    // Sellers can only see their own products
-    console.log(`[Products] Seller ${user.id} filtering by sellerId`);
-    where.sellerId = user.id;
+  } else if (user && ['seller', 'staff'].includes(user.role)) {
+    // Sellers and Staff can only see their own products
+    console.log(`[Products] Seller/Staff ${user.id} filtering by sellerId`);
+    where.sellerId = user.sellerId;
   } else if (req.query.categoryId) {
     // For super_admin or other roles, allow specific categoryId filter
     where.categoryId = parseInt(req.query.categoryId, 10);
@@ -115,9 +115,9 @@ async function createProduct(req, res) {
     // Super admin and admin can specify sellerId from request body.
     // If not provided, default to creating under their own account ("My Products").
     sellerId = req.body.sellerId || req.user.id;
-  } else if (req.user.role === 'seller') {
-    // Sellers can only create products for themselves
-    sellerId = req.user.id;
+  } else if (['seller', 'staff'].includes(req.user.role)) {
+    // Sellers and Staff can only create products for themselves
+    sellerId = req.user.sellerId;
   }
   
   if (!sellerId) return fail(res, { status: 400, message: 'Seller ID is required' });
@@ -155,10 +155,10 @@ async function createProduct(req, res) {
     }
   }
 
-  // For seller role, verify the category is assigned to their admin
-  if (req.user.role === 'seller') {
+  // For seller/staff role, verify the category is assigned to their admin
+  if (['seller', 'staff'].includes(req.user.role)) {
     const seller = await prisma.user.findUnique({
-      where: { id: req.user.id },
+      where: { id: req.user.sellerId },
       select: { adminId: true },
     });
     
@@ -258,7 +258,7 @@ async function updateProduct(req, res) {
   const prisma = getPrisma();
   const existing = await prisma.product.findUnique({ where: { id: parseInt(req.params.id, 10) } });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
 
   // If categoryId is being changed, validate access
   if (req.body.categoryId && req.body.categoryId !== existing.categoryId) {
@@ -277,10 +277,10 @@ async function updateProduct(req, res) {
       }
     }
     
-    // For seller role, verify the new category is assigned to their admin
-    if (req.user.role === 'seller') {
+    // For seller/staff role, verify the new category is assigned to their admin
+    if (['seller', 'staff'].includes(req.user.role)) {
       const seller = await prisma.user.findUnique({
-        where: { id: req.user.id },
+        where: { id: req.user.sellerId },
         select: { adminId: true },
       });
       
@@ -387,7 +387,7 @@ async function deleteProduct(req, res) {
     include: { category: true },
   });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
   
   await prisma.product.delete({ where: { id: parseInt(req.params.id, 10) } });
   
@@ -421,7 +421,7 @@ async function updateStock(req, res) {
     include: { category: true },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && p.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && p.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
 
   const stockStatus = req.body.stock || req.body.stockStatus;
   if (!stockStatus || !['available', 'unavailable'].includes(stockStatus)) {

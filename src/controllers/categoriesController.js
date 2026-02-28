@@ -32,10 +32,10 @@ async function listCategories(req, res) {
           meta: buildMeta({ page, limit, total: 0 }),
         });
       }
-    } else if (user && user.role === 'seller') {
-      // If user is seller, filter by categories assigned to their admin
+    } else if (user && ['seller', 'staff'].includes(user.role)) {
+      // If user is seller or staff, filter by categories assigned to their admin
       const seller = await prisma.user.findUnique({
-        where: { id: user.id },
+        where: { id: user.sellerId },
         select: { adminId: true },
       });
 
