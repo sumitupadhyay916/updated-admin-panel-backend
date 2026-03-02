@@ -228,6 +228,9 @@ model User {
   // Abandoned carts
   sellerAbandonedCarts AbandonedCart[] @relation("SellerAbandonedCarts")
   customerAbandonedCarts AbandonedCart[] @relation("CustomerAbandonedCarts")
+  
+  // Reviews
+  reviews Review[]
 
   // Seller policies
   sellerPolicy   SellerPolicy?
@@ -379,6 +382,7 @@ model Product {
   images           ProductImage[]
   inventoryMovements InventoryMovement[]
   orderItems       OrderItem[]
+  reviews          Review[]
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -726,6 +730,26 @@ model SellerFAQ {
   @@index([sellerId])
 }
 
+model Review {
+  id          String   @id @default(cuid())
+  productId   Int
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating      Int      // 1-5 stars
+  title       String?
+  comment     String
+  isVerified  Boolean  @default(false) // Verified purchase
+  isApproved  Boolean  @default(true)  // Admin approval
+  helpfulCount Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([productId])
+  @@index([userId])
+  @@index([isApproved])
+  @@index([createdAt])
+}
 // --- Staff Management ---
 
 model Staff {

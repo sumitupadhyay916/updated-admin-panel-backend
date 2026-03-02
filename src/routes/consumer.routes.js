@@ -4,6 +4,7 @@ const { requireAuth, requireRole, optionalAuth } = require('../middlewares/auth'
 const { asyncHandler } = require('../utils/asyncHandler');
 const consumerController = require('../controllers/consumerController');
 const addressRoutes = require('./address.routes');
+const reviewRoutes = require('./review.routes');
 
 // Public coupon routes (no auth needed)
 router.post('/validate-coupon', asyncHandler(consumerController.validateCoupon));
@@ -18,5 +19,8 @@ router.get('/orders', requireAuth, requireRole(['consumer']), asyncHandler(consu
 
 // Address routes
 router.use('/addresses', addressRoutes);
+
+// Review routes
+router.use('/', reviewRoutes);
 
 module.exports = router;
