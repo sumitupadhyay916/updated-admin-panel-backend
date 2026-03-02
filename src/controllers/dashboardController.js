@@ -47,7 +47,7 @@ async function getStats(userId = null, userRole = null) {
       select: { categoryId: true },
     });
     totalCategories = assignedCategoryIds.length;
-  } else if (userRole === 'seller' && userId) {
+  } else if (['seller', 'staff'].includes(userRole) && userId) {
     // Seller sees categories assigned to their admin
     const seller = await prisma.user.findUnique({
       where: { id: userId },
@@ -113,7 +113,8 @@ async function adminDashboard(req, res) {
 
 async function sellerDashboard(req, res) {
   const prisma = getPrisma();
-  const sellerId = req.user?.id;
+  // Using sellerId resolved from auth middleware
+  const sellerId = req.user?.sellerId || req.user?.id;
 
   // The correct filter: orders that contain at least one item from this seller
   const orderWhere = { items: { some: { sellerId } } };

@@ -38,8 +38,14 @@ async function requireAuth(req, res, next) {
 
 function requireRole(roles) {
   return function roleGuard(req, res, next) {
-    if (!req.user) return fail(res, { status: 401, message: 'Unauthorized' });
-    if (!roles.includes(req.user.role)) return fail(res, { status: 403, message: 'Forbidden' });
+    if (!req.user) {
+      console.log('[requireRole] 401 Unauthorized - No req.user');
+      return fail(res, { status: 401, message: 'Unauthorized' });
+    }
+    if (!roles.includes(req.user.role)) {
+      console.log(`[requireRole] 403 Forbidden - User role '${req.user.role}' not in allowed roles: [${roles.join(', ')}]`);
+      return fail(res, { status: 403, message: 'Forbidden' });
+    }
     return next();
   };
 }

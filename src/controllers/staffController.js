@@ -10,7 +10,7 @@ const bcrypt = require('bcryptjs');
 exports.createStaff = async (req, res) => {
   try {
     const { name, email, password, role, permissions, phone } = req.body;
-    const sellerId = req.user.id; // from auth middleware
+    const sellerId = req.user.sellerId || req.user.id; // from auth middleware
 
     // 1. Check if user already exists
     const existingUser = await prisma.user.findUnique({
@@ -18,6 +18,7 @@ exports.createStaff = async (req, res) => {
     });
 
     if (existingUser) {
+      console.log('[createStaff] Email already exists:', email);
       return res.status(400).json({
         success: false,
         message: 'A user with this email already exists',
@@ -70,11 +71,11 @@ exports.createStaff = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Error creating staff:', error);
-    res.status(500).json({
+    console.error('[createStaff] Error creating staff:', error);
+    res.status(400).json({
       success: false,
-      message: 'Failed to create staff member',
-      error: error.message,
+      message: error.message || 'Failed to create staff member',
+      error: error.stack,
     });
   }
 };
@@ -86,7 +87,7 @@ exports.createStaff = async (req, res) => {
  */
 exports.getStaff = async (req, res) => {
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.sellerId || req.user.id;
 
     const staffList = await prisma.staff.findMany({
       where: { sellerId },
@@ -125,7 +126,7 @@ exports.getStaff = async (req, res) => {
       data: formattedStaff,
     });
   } catch (error) {
-    console.error('Error fetching staff list:', error);
+    console.error('[getStaff] Error fetching staff list:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch staff list',

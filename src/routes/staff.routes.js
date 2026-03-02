@@ -6,8 +6,8 @@ const { requireAuth, requireRole } = require('../middlewares/auth');
 // Protect all routes
 router.use(requireAuth);
 
-// Allow sellers, admins, and super_admins to access staff management
-router.use(requireRole(['super_admin', 'admin', 'seller']));
+// Allow sellers, admins, super_admins, and staff to access staff management
+router.use(requireRole(['super_admin', 'admin', 'seller', 'staff']));
 
 // Routes
 router.route('/')
