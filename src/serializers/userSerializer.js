@@ -69,12 +69,25 @@ function serializeConsumerUser(u, addresses = []) {
   };
 }
 
+function serializeStaffUser(u) {
+  return {
+    ...serializeBaseUser(u),
+    staffProfile: u.staffProfile ? {
+      id: u.staffProfile.id,
+      sellerId: u.staffProfile.sellerId,
+      role: u.staffProfile.role,
+      permissions: u.staffProfile.permissions,
+    } : undefined
+  };
+}
+
 module.exports = {
   serializeBaseUser,
   serializeAdminUser,
   serializeSuperAdminUser,
   serializeSellerUser,
   serializeConsumerUser,
+  serializeStaffUser,
 };
 
 

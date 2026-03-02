@@ -11,7 +11,7 @@ const {
   markExpired,
 } = require('../controllers/abandonedCartsController');
 
-const sellerOnly = [requireAuth, requireRole(['seller', 'admin', 'super_admin'])];
+const sellerOnly = [requireAuth, requireRole(['seller', 'staff', 'admin', 'super_admin'])];
 
 // GET  /api/abandoned-carts          - list with filters + stats
 router.get('/', sellerOnly, listAbandonedCarts);
