@@ -31,7 +31,7 @@ router.get('/:id', requireAuth, asyncHandler(couponsController.getCoupon));
 router.post(
   '/',
   requireAuth,
-  requireRole(['super_admin', 'admin', 'seller']),
+  requireRole(['super_admin', 'admin', 'seller', 'staff']),
   validate(
     Joi.object({
       body: Joi.object({
@@ -64,7 +64,7 @@ router.post(
 router.put(
   '/:id',
   requireAuth,
-  requireRole(['super_admin', 'admin', 'seller']),
+  requireRole(['super_admin', 'admin', 'seller', 'staff']),
   validate(
     Joi.object({
       body: Joi.object({
@@ -94,8 +94,8 @@ router.put(
   asyncHandler(couponsController.updateCoupon),
 );
 
-router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(couponsController.deleteCoupon));
-router.post('/:id/toggle', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(couponsController.toggleCoupon));
+router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(couponsController.deleteCoupon));
+router.post('/:id/toggle', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(couponsController.toggleCoupon));
 
 module.exports = router;
 

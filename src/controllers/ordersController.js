@@ -22,8 +22,9 @@ async function listOrders(req, res) {
   if (req.query.customerId) where.customerId = String(req.query.customerId);
 
   // Seller isolation: sellers can only see orders that include their own items
-  if (req.user?.role === 'seller') {
-    where.items = { some: { sellerId: String(req.user.id) } };
+  if (['seller', 'staff'].includes(req.user?.role)) {
+    const sellerId = req.user.sellerId || req.user.id;
+    where.items = { some: { sellerId: String(sellerId) } };
   } else if (req.query.sellerId) {
     where.items = { some: { sellerId: String(req.query.sellerId) } };
   }
@@ -72,9 +73,10 @@ async function getOrder(req, res) {
   if (!o) return fail(res, { status: 404, message: 'Order not found' });
 
   // Seller isolation: sellers can only view orders that contain their items
-  if (req.user?.role === 'seller') {
-    const sellerHasItem = (o.items || []).some((i) => i.sellerId === req.user.id);
-    if (!sellerHasItem) {
+  if (['seller', 'staff'].includes(req.user?.role)) {
+    const sellerId = req.user.sellerId || req.user.id;
+    const isOwner = o.items.some((item) => item.sellerId === sellerId);
+    if (!isOwner) {
       return fail(res, { status: 403, message: 'Forbidden' });
     }
   }

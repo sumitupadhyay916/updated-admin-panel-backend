@@ -46,8 +46,8 @@ async function listProducts(req, res) {
     } else {
       return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
-  } else if (user && user.role === 'seller') {
-    where.sellerId = user.id;
+  } else if (user && ['seller', 'staff'].includes(user.role)) {
+    where.sellerId = user.sellerId || user.id;
   } else if (req.query.categoryId) {
     // For super_admin or other roles, allow specific categoryId filter
     where.categoryId = parseInt(req.query.categoryId, 10);
@@ -108,9 +108,9 @@ async function createProduct(req, res) {
     // Super admin and admin can specify sellerId from request body.
     // If not provided, default to creating under their own account ("My Products").
     sellerId = req.body.sellerId || req.user.id;
-  } else if (req.user.role === 'seller') {
-    // Sellers can only create products for themselves
-    sellerId = req.user.id;
+  } else if (['seller', 'staff'].includes(req.user.role)) {
+    // Sellers and Staff can only create products for themselves
+    sellerId = req.user.sellerId;
   }
   
   if (!sellerId) return fail(res, { status: 400, message: 'Seller ID is required' });
@@ -148,10 +148,10 @@ async function createProduct(req, res) {
     }
   }
 
-  // For seller role, verify the category is assigned to their admin
-  if (req.user.role === 'seller') {
+  // For seller/staff role, verify the category is assigned to their admin
+  if (['seller', 'staff'].includes(req.user.role)) {
     const seller = await prisma.user.findUnique({
-      where: { id: req.user.id },
+      where: { id: req.user.sellerId },
       select: { adminId: true },
     });
     
@@ -260,7 +260,7 @@ async function updateProduct(req, res) {
   const prisma = getPrisma();
   const existing = await prisma.product.findUnique({ where: { id: parseInt(req.params.id, 10) } });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
 
   // If categoryId is being changed, validate access
   if (req.body.categoryId && req.body.categoryId !== existing.categoryId) {
@@ -279,10 +279,10 @@ async function updateProduct(req, res) {
       }
     }
     
-    // For seller role, verify the new category is assigned to their admin
-    if (req.user.role === 'seller') {
+    // For seller/staff role, verify the new category is assigned to their admin
+    if (['seller', 'staff'].includes(req.user.role)) {
       const seller = await prisma.user.findUnique({
-        where: { id: req.user.id },
+        where: { id: req.user.sellerId },
         select: { adminId: true },
       });
       
@@ -389,7 +389,7 @@ async function deleteProduct(req, res) {
     include: { category: true },
   });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && existing.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
   
   await prisma.product.delete({ where: { id: parseInt(req.params.id, 10) } });
   
@@ -423,7 +423,7 @@ async function updateStock(req, res) {
     include: { category: true },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
-  if (req.user.role === 'seller' && p.sellerId !== req.user.id) return fail(res, { status: 403, message: 'Forbidden' });
+  if (['seller', 'staff'].includes(req.user.role) && p.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
 
   const stockStatus = req.body.stock || req.body.stockStatus;
   if (!stockStatus || !['available', 'unavailable'].includes(stockStatus)) {
@@ -551,38 +551,41 @@ module.exports = {
 // ============================================
 
 async function getInventoryStats(req, res) {
-  const prisma = getPrisma();
-  const user = req.user;
-  
-  // Build where clause based on user role
-  const where = {};
-  if (user.role === 'seller') {
-    where.sellerId = user.id;
-  } else if (user.role === 'admin') {
-    const assignedCategoryIds = await prisma.adminCategory.findMany({
-      where: { adminId: user.id },
-      select: { categoryId: true },
-    });
-    const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-    if (categoryIds.length > 0) {
-      where.categoryId = { in: categoryIds };
-    } else {
-      return ok(res, {
-        message: 'Inventory stats fetched',
-        data: {
-          totalProducts: 0,
-          totalStockQuantity: 0,
-          deliveredQuantity: 0,
-          reservedQuantity: 0,
-          shippingQuantity: 0,
-          lowStockProducts: 0,
-        },
+  try {
+    const prisma = getPrisma();
+    const user = req.user;
+    console.log('Fetching inventory stats for user:', user?.id, user?.role);
+    
+    // Build where clause based on user role
+    const where = {};
+    // If user is seller or staff, restrict low stock fetching to their own products
+    if (user && ['seller', 'staff'].includes(user.role)) {
+      where.sellerId = user.sellerId || user.id;
+    } else if (user.role === 'admin') {
+      const assignedCategoryIds = await prisma.adminCategory.findMany({
+        where: { adminId: user.id },
+        select: { categoryId: true },
       });
+      const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
+      if (categoryIds.length > 0) {
+        where.categoryId = { in: categoryIds };
+      } else {
+        return ok(res, {
+          message: 'Inventory stats fetched',
+          data: {
+            totalProducts: 0,
+            totalStockQuantity: 0,
+            deliveredQuantity: 0,
+            reservedQuantity: 0,
+            shippingQuantity: 0,
+            lowStockProducts: 0,
+          },
+        });
+      }
     }
-  }
 
-  // Get all products for this seller/admin
-  const products = await prisma.product.findMany({
+    // Get all products for this seller/admin
+    const products = await prisma.product.findMany({
     where,
     select: { id: true, stockQuantity: true, lowStockThreshold: true, stock: true },
   });
@@ -669,10 +672,14 @@ async function getInventoryStats(req, res) {
     }
   }
 
-  return ok(res, {
-    message: 'Inventory stats fetched',
-    data: stats,
-  });
+    return ok(res, {
+      message: 'Inventory stats fetched',
+      data: stats,
+    });
+  } catch (error) {
+    console.error('[getInventoryStats] 500 Error:', error);
+    return fail(res, { status: 500, message: error.message, stack: error.stack });
+  }
 }
 
 async function updateProductStock(req, res) {
@@ -835,8 +842,8 @@ async function getCartDetails(req, res) {
   
   // Build where clause based on user role
   const where = {};
-  if (user.role === 'seller') {
-    where.sellerId = user.id;
+  if (user && ['seller', 'staff'].includes(user.role)) {
+    where.sellerId = user.sellerId || user.id;
   } else if (user.role === 'admin') {
     const assignedCategoryIds = await prisma.adminCategory.findMany({
       where: { adminId: user.id },
