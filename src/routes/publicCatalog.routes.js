@@ -5,6 +5,7 @@ const {
   getPublicProducts,
   getPublicProductByPid
 } = require('../controllers/publicCatalogController');
+const { getProductReviews } = require('../controllers/reviewsController');
 const { asyncHandler } = require('../utils/asyncHandler');
 const reviewController = require('../controllers/reviewController');
 
@@ -12,6 +13,7 @@ const reviewController = require('../controllers/reviewController');
 router.get('/categories', getPublicCategories);
 router.get('/products', getPublicProducts);
 router.get('/products/:pid', getPublicProductByPid);
+router.get('/products/:pid/reviews', getProductReviews);
 
 // Public review routes
 router.get('/products/:pid/reviews', asyncHandler(reviewController.getProductReviews));

@@ -13,9 +13,12 @@ router.post('/available-coupons', asyncHandler(consumerController.getAvailableCo
 // Sync cart / abandoned-cart detection — optionalAuth so logged-in users are identified
 router.post('/sync-cart', optionalAuth, asyncHandler(consumerController.syncCart));
 
+const { createReview } = require('../controllers/reviewsController');
+
 // Authenticated consumer routes
 router.post('/checkout', requireAuth, requireRole(['consumer']), asyncHandler(consumerController.checkout));
 router.get('/orders', requireAuth, requireRole(['consumer']), asyncHandler(consumerController.getConsumerOrders));
+router.post('/reviews', requireAuth, requireRole(['consumer']), asyncHandler(createReview));
 
 // Address routes
 router.use('/addresses', addressRoutes);

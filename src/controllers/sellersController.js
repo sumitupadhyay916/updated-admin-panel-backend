@@ -17,7 +17,7 @@ async function listSellers(req, res) {
   try {
     // Build authorization-based where clause
     const authWhere = await buildSellerWhereClause(req.user, prisma);
-    
+
     // Merge with additional filters
     const where = { ...authWhere };
     if (status) where.status = status;
@@ -30,7 +30,7 @@ async function listSellers(req, res) {
           { businessName: { contains: search, mode: 'insensitive' } },
         ]
       };
-      
+
       if (where.AND) {
         where.AND.push(searchConditions);
       } else {
@@ -80,9 +80,9 @@ async function listSellers(req, res) {
 
 async function getSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const seller = await prisma.user.findFirst({ 
+  const seller = await prisma.user.findFirst({
     where: { id: req.params.id, role: 'seller' },
     include: {
       admin: {
@@ -102,7 +102,7 @@ async function getSeller(req, res) {
       }
     }
   });
-  
+
   if (!seller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
@@ -115,7 +115,7 @@ async function getSeller(req, res) {
   // Admin must have authorization
   if (req.user.role === 'admin') {
     const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
+
     if (!hasAccess) {
       logAuthorizationFailure({
         userId: req.user.id,
@@ -124,12 +124,12 @@ async function getSeller(req, res) {
         sellerId: req.params.id,
         reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to access this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      return fail(res, {
+        status: 403,
+        message: 'You do not have permission to access this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
       });
     }
-    
+
     return ok(res, { message: 'Seller fetched', data: serializeSellerUser(seller) });
   }
 
@@ -141,9 +141,9 @@ async function getSeller(req, res) {
     sellerId: req.params.id,
     reason: 'Insufficient permissions - only admins and super_admins can access seller data'
   });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to access seller data' 
+  return fail(res, {
+    status: 403,
+    message: 'Insufficient permissions to access seller data'
   });
 }
 
@@ -218,12 +218,12 @@ async function createSeller(req, res) {
 
 async function updateSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const existingSeller = await prisma.user.findFirst({ 
-    where: { id: req.params.id, role: 'seller' } 
+  const existingSeller = await prisma.user.findFirst({
+    where: { id: req.params.id, role: 'seller' }
   });
-  
+
   if (!existingSeller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
@@ -248,7 +248,7 @@ async function updateSeller(req, res) {
   // Admin must have authorization
   if (req.user.role === 'admin') {
     const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
+
     if (!hasAccess) {
       logAuthorizationFailure({
         userId: req.user.id,
@@ -257,12 +257,12 @@ async function updateSeller(req, res) {
         sellerId: req.params.id,
         reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to update this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      return fail(res, {
+        status: 403,
+        message: 'You do not have permission to update this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
       });
     }
-    
+
     const seller = await prisma.user.update({
       where: { id: req.params.id },
       data: {
@@ -286,20 +286,20 @@ async function updateSeller(req, res) {
     sellerId: req.params.id,
     reason: 'Insufficient permissions - only admins and super_admins can update seller data'
   });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to update seller data' 
+  return fail(res, {
+    status: 403,
+    message: 'Insufficient permissions to update seller data'
   });
 }
 
 async function deleteSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const existingSeller = await prisma.user.findFirst({ 
-    where: { id: req.params.id, role: 'seller' } 
+  const existingSeller = await prisma.user.findFirst({
+    where: { id: req.params.id, role: 'seller' }
   });
-  
+
   if (!existingSeller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
@@ -313,7 +313,7 @@ async function deleteSeller(req, res) {
   // Admin must have authorization
   if (req.user.role === 'admin') {
     const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
+
     if (!hasAccess) {
       logAuthorizationFailure({
         userId: req.user.id,
@@ -322,12 +322,12 @@ async function deleteSeller(req, res) {
         sellerId: req.params.id,
         reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      return fail(res, {
+        status: 403,
+        message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
       });
     }
-    
+
     await prisma.user.delete({ where: { id: req.params.id } });
     return ok(res, { message: 'Seller deleted', data: null });
   }
@@ -340,9 +340,9 @@ async function deleteSeller(req, res) {
     sellerId: req.params.id,
     reason: 'Insufficient permissions - only admins and super_admins can delete seller data'
   });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to delete seller data' 
+  return fail(res, {
+    status: 403,
+    message: 'Insufficient permissions to delete seller data'
   });
 }
 
@@ -363,7 +363,31 @@ async function sellerProducts(req, res) {
     prisma.product.count({ where }),
     prisma.product.findMany({
       where,
-      include: { images: true, seller: true },
+      include: {
+        images: true,
+        seller: true,
+        category: true,
+        subcategory: true,
+        options: {
+          include: {
+            values: true
+          }
+        },
+        variants: {
+          include: {
+            images: true,
+            optionValues: {
+              include: {
+                optionValue: {
+                  include: {
+                    option: true
+                  }
+                }
+              }
+            }
+          }
+        },
+      },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,

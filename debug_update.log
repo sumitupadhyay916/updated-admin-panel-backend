@@ -1,0 +1,28 @@
+
+[2026-03-02T06:45:50.868Z] Updating product 110
+Body: {"name":"Prada Cotton corduroy overshirt","categoryId":48,"price":300,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Final updateData: {"name":"Prada Cotton corduroy overshirt","price":300,"categoryId":48}
+
+[2026-03-02T06:46:04.584Z] Updating product 110
+Body: {"name":"Prada Cotton corduroy overshirt","categoryId":48,"price":300,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Final updateData: {"name":"Prada Cotton corduroy overshirt","price":300,"categoryId":48}
+
+[2026-03-02T06:48:01.036Z] Updating product 110
+Body: {"name":"Prada Cotton corduroy overshirt","categoryId":48,"price":300,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Final updateData: {"name":"Prada Cotton corduroy overshirt","price":300,"categoryId":48}
+
+[2026-03-02T06:48:16.279Z] Updating product 110
+Body: {"name":"Prada Cotton corduroy overshirt","categoryId":48,"price":300,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Final updateData: {"name":"Prada Cotton corduroy overshirt","price":300,"categoryId":48}
+
+[2026-03-02T06:59:33.984Z] Updating product 110
+Body: {"name":"Prada Cotton corduroy overshirt","categoryId":48,"price":300,"stock":"available","variants":[],"subcategoryId":53,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Looking up subcategory ID: 53
+Found sub: Shirts Combination, shirts-combination
+Final updateData: {"name":"Prada Cotton corduroy overshirt","price":300,"stock":"available","categoryId":48,"subcategoryId":53,"subcategorySlug":"shirts-combination"}
+
+[2026-03-02T07:00:15.055Z] Updating product 109
+Body: {"name":"T-shirt","categoryId":48,"price":200,"stock":"available","variants":[],"subcategoryId":52,"sellerId":"cmlukgx7v0005db225ocfenst"}
+Looking up subcategory ID: 52
+Found sub: T-Shirts, t-shirts
+Final updateData: {"name":"T-shirt","price":200,"stock":"available","categoryId":48,"subcategoryId":52,"subcategorySlug":"t-shirts"}

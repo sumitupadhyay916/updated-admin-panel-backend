@@ -232,6 +232,9 @@ model User {
   // Reviews
   reviews Review[]
 
+  // Reviews
+  reviews       Review[] @relation("UserReviews")
+
   // Seller policies
   sellerPolicy   SellerPolicy?
   sellerFaqs     SellerFAQ[]
@@ -382,6 +385,10 @@ model Product {
   images           ProductImage[]
   inventoryMovements InventoryMovement[]
   orderItems       OrderItem[]
+  variants         ProductVariant[]
+  options          ProductOption[]
+  reviews          Review[]
+  averageRating    Float         @default(0)
   reviews          Review[]
 
   createdAt        DateTime      @default(now())
@@ -406,6 +413,76 @@ model ProductImage {
 
   @@unique([productId, url])
   @@index([productId, sortOrder])
+}
+
+model ProductOption {
+  id        String               @id @default(cuid())
+  productId Int
+  product   Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String               // e.g., "Color", "Size"
+  values    ProductOptionValue[]
+
+  @@index([productId])
+}
+
+model ProductOptionValue {
+  id       String               @id @default(cuid())
+  optionId String
+  option   ProductOption        @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  value    String               // e.g., "Navy", "L"
+  variants VariantOptionValue[]
+
+  @@index([optionId])
+}
+
+model ProductVariant {
+  id           String               @id @default(cuid())
+  productId    Int
+  product      Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  price        Float
+  comparePrice Float?
+  stock        Int                  @default(0)
+  images       VariantImage[]
+  optionValues VariantOptionValue[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@index([productId])
+}
+
+model VariantOptionValue {
+  variantId     String
+  variant       ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  optionValueId String
+  optionValue   ProductOptionValue @relation(fields: [optionValueId], references: [id], onDelete: Cascade)
+
+  @@id([variantId, optionValueId])
+}
+
+model VariantImage {
+  id        String         @id @default(cuid())
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  url       String
+  sortOrder Int            @default(0)
+
+  @@index([variantId])
+}
+
+model Review {
+  id           String        @id @default(cuid())
+  productId    Int
+  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User          @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
+  rating       Int           // 1 to 5
+  title        String?
+  comment      String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([productId])
+  @@index([userId])
 }
 
 model InventoryMovement {

@@ -31,8 +31,8 @@ async function getStats(userId = null, userRole = null) {
 
   // Note: Product model uses 'stock' enum (available/unavailable), not stockQuantity
   // For low stock, we'll just count unavailable products
-  const lowStockProducts = await prisma.product.count({ 
-    where: { stock: 'unavailable' } 
+  const lowStockProducts = await prisma.product.count({
+    where: { stock: 'unavailable' }
   });
 
   // Get total categories count based on user role
@@ -94,15 +94,19 @@ function makeSeries(names, key, total) {
 }
 
 async function superAdminDashboard(req, res) {
+  console.log('[Dashboard] Super Admin endpoint called at:', new Date().toISOString());
+  console.log('[Dashboard] User:', req.user?.email, 'Role:', req.user?.role);
+
   const stats = await getStats(req.user?.id, req.user?.role);
-  
+  console.log('[Dashboard] Super Admin stats:', stats);
+
   // Add version to verify new code is loaded
   const response = {
     ...stats,
     _version: '3.0.0', // Updated version for category count
     _timestamp: new Date().toISOString(),
   };
-  
+
   return ok(res, { message: 'Dashboard fetched', data: response });
 }
 
@@ -127,7 +131,7 @@ async function sellerDashboard(req, res) {
     months.push({
       label: d.toLocaleString('en-IN', { month: 'short' }),
       start: new Date(d.getFullYear(), d.getMonth(), 1),
-      end:   new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999),
+      end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999),
     });
   }
   const since = months[0].start;
@@ -192,9 +196,9 @@ async function sellerDashboard(req, res) {
       deliveredOrders,
       myProducts,
       totalReviews: Number(reviewAgg._sum.reviewCount || 0),
-      totalEarnings:    Number(seller?.totalEarnings    || totalRevenue || 0),
+      totalEarnings: Number(seller?.totalEarnings || totalRevenue || 0),
       availableBalance: Number(seller?.availableBalance || 0),
-      pendingBalance:   Number(seller?.pendingBalance   || 0),
+      pendingBalance: Number(seller?.pendingBalance || 0),
       chartData,
     },
   });
@@ -251,7 +255,31 @@ async function widgetPendingProducts(req, res) {
   const rows = await prisma.product.findMany({
     where: { status: 'pending' },
     take: limit,
-    include: { images: true, seller: true },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+      options: {
+        include: {
+          values: true
+        }
+      },
+      variants: {
+        include: {
+          images: true,
+          optionValues: {
+            include: {
+              optionValue: {
+                include: {
+                  option: true
+                }
+              }
+            }
+          }
+        }
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
   return ok(res, { message: 'Pending products fetched', data: rows.map(serializeProduct) });

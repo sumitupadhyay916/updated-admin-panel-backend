@@ -5,71 +5,102 @@ const { serializeProduct } = require('../serializers/productSerializer');
 const { toDbPackagingType, toDbOccasion } = require('../utils/enums');
 
 async function listProducts(req, res) {
-  const prisma = getPrisma();
-  const { page, limit, search } = parsePagination(req.query);
-  const user = req.user;
+  try {
+    const prisma = getPrisma();
+    const { page, limit, search } = parsePagination(req.query);
+    const user = req.user;
 
-  const where = {};
-  if (req.query.sellerId) where.sellerId = String(req.query.sellerId);
-  if (req.query.stock) where.stock = String(req.query.stock);
-  if (req.query.deity) where.deity = String(req.query.deity);
-  if (req.query.material) where.material = String(req.query.material);
-  if (req.query.isFeatured !== undefined) where.isFeatured = String(req.query.isFeatured) === 'true';
-  if (req.query.minPrice) where.price = { gte: Number(req.query.minPrice) };
-  if (req.query.maxPrice) where.price = { ...(where.price || {}), lte: Number(req.query.maxPrice) };
-  if (search) {
-    where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-    ];
-  }
-
-  // If user is admin (not super_admin), filter by assigned categories
-  if (user && user.role === 'admin') {
-    const assignedCategoryIds = await prisma.adminCategory.findMany({
-      where: { adminId: user.id },
-      select: { categoryId: true },
-    });
-    const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-    if (categoryIds.length > 0) {
-      // If a specific categoryId is requested, verify it's in the assigned list
-      if (req.query.categoryId) {
-        const requestedCategoryId = parseInt(req.query.categoryId, 10);
-        if (!categoryIds.includes(requestedCategoryId)) {
-          return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
-        }
-        where.categoryId = requestedCategoryId;
-      } else {
-        // Filter by all assigned categories
-        where.categoryId = { in: categoryIds };
-      }
-    } else {
-      return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
+    const where = {};
+    if (req.query.sellerId) where.sellerId = String(req.query.sellerId);
+    if (req.query.stock) where.stock = String(req.query.stock);
+    if (req.query.deity) where.deity = String(req.query.deity);
+    if (req.query.material) where.material = String(req.query.material);
+    if (req.query.isFeatured !== undefined) where.isFeatured = String(req.query.isFeatured) === 'true';
+    if (req.query.minPrice) where.price = { gte: Number(req.query.minPrice) };
+    if (req.query.maxPrice) where.price = { ...(where.price || {}), lte: Number(req.query.maxPrice) };
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
     }
-  } else if (user && ['seller', 'staff'].includes(user.role)) {
-    where.sellerId = user.sellerId || user.id;
-  } else if (req.query.categoryId) {
-    // For super_admin or other roles, allow specific categoryId filter
-    where.categoryId = parseInt(req.query.categoryId, 10);
+
+    // If user is admin (not super_admin), filter by assigned categories
+    if (user && user.role === 'admin') {
+      const assignedCategoryIds = await prisma.adminCategory.findMany({
+        where: { adminId: user.id },
+        select: { categoryId: true },
+      });
+      const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
+      console.log(`[Products] Admin ${user.id} has assigned categories:`, categoryIds);
+      if (categoryIds.length > 0) {
+        // If a specific categoryId is requested, verify it's in the assigned list
+        if (req.query.categoryId) {
+          const requestedCategoryId = parseInt(req.query.categoryId, 10);
+          if (!categoryIds.includes(requestedCategoryId)) {
+            // Admin doesn't have access to this category
+            console.log(`[Products] Admin ${user.id} requested category ${requestedCategoryId} but doesn't have access`);
+            return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
+          }
+          where.categoryId = requestedCategoryId;
+        } else {
+          // Filter by all assigned categories
+          where.categoryId = { in: categoryIds };
+        }
+      } else {
+        // Admin has no categories assigned, return empty
+        console.log(`[Products] Admin ${user.id} has no categories assigned, returning empty`);
+        return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
+      }
+    } else if (user && user.role === 'seller') {
+      // Sellers can only see their own products
+      console.log(`[Products] Seller ${user.id} filtering by sellerId`);
+      where.sellerId = user.id;
+    } else if (req.query.categoryId) {
+      // For super_admin or other roles, allow specific categoryId filter
+      where.categoryId = parseInt(req.query.categoryId, 10);
+    }
+
+    const [total, rows] = await Promise.all([
+      prisma.product.count({ where }),
+      prisma.product.findMany({
+        where,
+        include: {
+          images: true,
+          seller: true,
+          category: true,
+          subcategory: true,
+          options: {
+            include: {
+              values: true
+            }
+          },
+          variants: {
+            include: {
+              images: true,
+              optionValues: {
+                include: {
+                  optionValue: {
+                    include: {
+                      option: true
+                    }
+                  }
+                }
+              }
+            }
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return ok(res, { message: 'Products fetched', data: rows.map(serializeProduct), meta: buildMeta({ page, limit, total }) });
+  } catch (error) {
+    console.error('[listProducts] Fatal Error:', error);
+    return fail(res, { status: 500, message: 'Internal server error while fetching products' });
   }
-
-  const [total, rows] = await Promise.all([
-    prisma.product.count({ where }),
-    prisma.product.findMany({
-      where,
-      include: { 
-        images: true, 
-        seller: true,
-        category: true,
-        subcategory: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-  ]);
-
-  return ok(res, { message: 'Products fetched', data: rows.map(serializeProduct), meta: buildMeta({ page, limit, total }) });
 }
 
 async function getProduct(req, res) {
@@ -77,9 +108,33 @@ async function getProduct(req, res) {
   const user = req.user;
   const productId = parseInt(req.params.id, 10);
 
-  const p = await prisma.product.findUnique({ 
-    where: { id: productId }, 
-    include: { images: true, seller: true, category: true, subcategory: true } 
+  const p = await prisma.product.findUnique({
+    where: { id: productId },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+      options: {
+        include: {
+          values: true
+        }
+      },
+      variants: {
+        include: {
+          images: true,
+          optionValues: {
+            include: {
+              optionValue: {
+                include: {
+                  option: true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
 
@@ -101,7 +156,7 @@ async function getProduct(req, res) {
 
 async function createProduct(req, res) {
   const prisma = getPrisma();
-  
+
   // Determine sellerId based on user role
   let sellerId;
   if (req.user.role === 'super_admin' || req.user.role === 'admin') {
@@ -112,7 +167,7 @@ async function createProduct(req, res) {
     // Sellers and Staff can only create products for themselves
     sellerId = req.user.sellerId;
   }
-  
+
   if (!sellerId) return fail(res, { status: 400, message: 'Seller ID is required' });
 
   // Validate required fields
@@ -154,18 +209,18 @@ async function createProduct(req, res) {
       where: { id: req.user.sellerId },
       select: { adminId: true },
     });
-    
+
     if (!seller || !seller.adminId) {
       return fail(res, { status: 403, message: 'You are not assigned to an admin' });
     }
-    
+
     const hasAccess = await prisma.adminCategory.findFirst({
       where: {
         adminId: seller.adminId,
         categoryId: category.id,
       },
     });
-    
+
     if (!hasAccess) {
       return fail(res, { status: 403, message: 'You can only create products in categories assigned to your admin' });
     }
@@ -201,59 +256,130 @@ async function createProduct(req, res) {
   // Resolve subcategory if provided
   let subcategoryId = null;
   let subcategorySlug = null;
-  if (req.body.subcategoryId) {
+  if (req.body.subcategoryId && req.body.subcategoryId !== '__none__') {
     const sub = await prisma.subcategory.findUnique({ where: { id: parseInt(req.body.subcategoryId, 10) } });
     if (!sub) return fail(res, { status: 400, message: 'Invalid subcategory' });
-    if (sub.categoryId !== parseInt(req.body.categoryId, 10)) {
-      return fail(res, { status: 400, message: 'Subcategory does not belong to the selected category' });
-    }
     subcategoryId = sub.id;
     subcategorySlug = sub.slug;
   }
 
-  // Parse initial stock quantity - CRITICAL for inventory tracking
-  const initialStockQuantity = req.body.stockQuantity !== undefined 
-    ? parseInt(req.body.stockQuantity, 10) 
-    : 0;
-  
-  // Auto-set stock status based on quantity
-  const stockStatus = initialStockQuantity > 0 ? 'available' : 'unavailable';
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Create the Product
+      const product = await tx.product.create({
+        data: {
+          sellerId,
+          categoryId: parseInt(req.body.categoryId, 10),
+          subcategoryId,
+          subcategorySlug,
+          name: req.body.name.trim(),
+          description: req.body.description || req.body.name.trim(),
+          price: parseFloat(req.body.price),
+          stock: req.body.stock,
+          deity: req.body.deity || 'Other',
+          material: req.body.material || 'Brass',
+          height: req.body.height || 10.0,
+          weight: req.body.weight || 100.0,
+          handcrafted: req.body.handcrafted || false,
+          occasion: req.body.occasion ? (req.body.occasion || []).map(toDbOccasion) : [],
+          religionCategory: req.body.religionCategory || 'Hindu',
+          packagingType: req.body.packagingType ? toDbPackagingType(req.body.packagingType) : 'Standard',
+          fragile: req.body.fragile || false,
+          comparePrice: req.body.comparePrice ? parseFloat(req.body.comparePrice) : null,
+          lowStockThreshold: req.body.lowStockThreshold ?? 5,
+          tags: req.body.tags || [],
+          images: {
+            create: (req.body.images || []).map((url, idx) => ({ url, sortOrder: idx })),
+          },
+        }
+      });
 
-  // For super admin simplified creation, use defaults for missing fields
-  const productData = {
-    sellerId,
-    categoryId: parseInt(req.body.categoryId, 10),
-    subcategoryId,
-    subcategorySlug,
-    name: req.body.name.trim(),
-    description: req.body.description || req.body.name.trim(),
-    price: parseFloat(req.body.price),
-    stock: req.body.stock || stockStatus,
-    stockQuantity: initialStockQuantity,
-    // Default values for required fields
-    deity: req.body.deity || 'Other',
-    material: req.body.material || 'Brass',
-    height: req.body.height || 10.0,
-    weight: req.body.weight || 100.0,
-    handcrafted: req.body.handcrafted || false,
-    occasion: req.body.occasion ? (req.body.occasion || []).map(toDbOccasion) : [],
-    religionCategory: req.body.religionCategory || 'Hindu',
-    packagingType: req.body.packagingType ? toDbPackagingType(req.body.packagingType) : 'Standard',
-    fragile: req.body.fragile || false,
-    comparePrice: req.body.comparePrice ? parseFloat(req.body.comparePrice) : null,
-    lowStockThreshold: req.body.lowStockThreshold ?? 5,
-    tags: req.body.tags || [],
-    images: {
-      create: (req.body.images || []).map((url, idx) => ({ url, sortOrder: idx })),
-    },
-  };
+      // 2. Create Options and Values
+      const optionMap = {}; // Maps frontend option name to created option ID
+      const valueMap = {};  // Maps frontend optionValue string to created value ID
 
-  const p = await prisma.product.create({
-    data: productData,
-    include: { images: true, seller: true, category: true, subcategory: true },
-  });
+      if (req.body.options && Array.isArray(req.body.options)) {
+        for (const opt of req.body.options) {
+          const createdOption = await tx.productOption.create({
+            data: {
+              productId: product.id,
+              name: opt.name,
+              values: {
+                create: (opt.values || []).map(v => ({ value: v }))
+              }
+            },
+            include: { values: true }
+          });
+          optionMap[opt.name] = createdOption.id;
+          createdOption.values.forEach(v => {
+            valueMap[`${opt.name}:${v.value}`] = v.id;
+          });
+        }
+      }
 
-  return ok(res, { message: 'Product created', data: serializeProduct(p) });
+      // 3. Create Variants and link to OptionValues
+      if (req.body.variants && Array.isArray(req.body.variants)) {
+        for (const v of req.body.variants) {
+          const variant = await tx.productVariant.create({
+            data: {
+              productId: product.id,
+              price: parseFloat(v.price),
+              comparePrice: v.comparePrice ? parseFloat(v.comparePrice) : null,
+              stock: parseInt(v.stock, 10) || 0,
+              images: {
+                create: (v.images || v.imageUrls || []).map((url, idx) => ({ url, sortOrder: idx }))
+              }
+            }
+          });
+
+          // Link variant to option values based on provided mapping
+          if (v.optionValueNames && typeof v.optionValueNames === 'object') {
+            for (const [optName, valName] of Object.entries(v.optionValueNames)) {
+              const valueId = valueMap[`${optName}:${valName}`];
+              if (valueId) {
+                await tx.variantOptionValue.create({
+                  data: {
+                    variantId: variant.id,
+                    optionValueId: valueId
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Update Category count
+      await tx.category.update({
+        where: { id: product.categoryId },
+        data: { noOfProducts: { increment: 1 } },
+      });
+
+      return product;
+    });
+
+    // Fetch final result with all includes
+    const finalProduct = await prisma.product.findUnique({
+      where: { id: result.id },
+      include: {
+        images: true, seller: true, category: true, subcategory: true,
+        options: { include: { values: true } },
+        variants: {
+          include: {
+            images: true,
+            optionValues: {
+              include: { optionValue: { include: { option: true } } }
+            }
+          }
+        }
+      }
+    });
+
+    return ok(res, { message: 'Product created', data: serializeProduct(finalProduct) });
+  } catch (error) {
+    console.error('[createProduct] Error:', error);
+    return fail(res, { status: 500, message: 'Failed to create product' });
+  }
 }
 
 async function updateProduct(req, res) {
@@ -265,7 +391,7 @@ async function updateProduct(req, res) {
   // If categoryId is being changed, validate access
   if (req.body.categoryId && req.body.categoryId !== existing.categoryId) {
     const newCategoryId = parseInt(req.body.categoryId, 10);
-    
+
     // For admin role, verify they have access to the new category
     if (req.user.role === 'admin') {
       const hasAccess = await prisma.adminCategory.findFirst({
@@ -278,25 +404,25 @@ async function updateProduct(req, res) {
         return fail(res, { status: 403, message: 'You do not have access to this category' });
       }
     }
-    
+
     // For seller/staff role, verify the new category is assigned to their admin
     if (['seller', 'staff'].includes(req.user.role)) {
       const seller = await prisma.user.findUnique({
         where: { id: req.user.sellerId },
         select: { adminId: true },
       });
-      
+
       if (!seller || !seller.adminId) {
         return fail(res, { status: 403, message: 'You are not assigned to an admin' });
       }
-      
+
       const hasAccess = await prisma.adminCategory.findFirst({
         where: {
           adminId: seller.adminId,
           categoryId: newCategoryId,
         },
       });
-      
+
       if (!hasAccess) {
         return fail(res, { status: 403, message: 'You can only assign products to categories assigned to your admin' });
       }
@@ -324,7 +450,7 @@ async function updateProduct(req, res) {
     isFeatured: req.body.isFeatured ?? undefined,
     stock: req.body.stock ?? undefined,
   };
-  
+
   // Add categoryId to updateData if provided
   if (req.body.categoryId) {
     updateData.categoryId = parseInt(req.body.categoryId, 10);
@@ -332,13 +458,15 @@ async function updateProduct(req, res) {
 
   // Handle subcategoryId update
   if (req.body.subcategoryId !== undefined) {
-    if (req.body.subcategoryId === null || req.body.subcategoryId === '') {
-      // Clear subcategory
+    if (req.body.subcategoryId === null || req.body.subcategoryId === '' || req.body.subcategoryId === '__none__') {
       updateData.subcategoryId = null;
       updateData.subcategorySlug = null;
     } else {
-      const sub = await prisma.subcategory.findUnique({ where: { id: parseInt(req.body.subcategoryId, 10) } });
-      if (!sub) return fail(res, { status: 400, message: 'Invalid subcategory' });
+      const subId = parseInt(req.body.subcategoryId, 10);
+      const sub = await prisma.subcategory.findUnique({ where: { id: subId } });
+      if (!sub) {
+        return fail(res, { status: 400, message: 'Invalid subcategory' });
+      }
       updateData.subcategoryId = sub.id;
       updateData.subcategorySlug = sub.slug;
     }
@@ -364,43 +492,174 @@ async function updateProduct(req, res) {
     updateData.sellerId = nextSellerId;
   }
 
-  const p = await prisma.product.update({
-    where: { id: parseInt(req.params.id, 10) },
-    data: updateData,
-    include: { images: true, seller: true, category: true, subcategory: true },
-  });
+  try {
+    const p = await prisma.$transaction(async (tx) => {
+      // 1. Update core product data
+      const updated = await tx.product.update({
+        where: { id: parseInt(req.params.id, 10) },
+        data: updateData,
+      });
 
-  // Replace images if provided
-  if (req.body.images) {
-    await prisma.productImage.deleteMany({ where: { productId: p.id } });
-    await prisma.productImage.createMany({
-      data: req.body.images.map((url, idx) => ({ productId: p.id, url, sortOrder: idx })),
+      // 2. Sync Images if provided
+      if (req.body.images) {
+        await tx.productImage.deleteMany({ where: { productId: updated.id } });
+        await tx.productImage.createMany({
+          data: (req.body.images || []).map((url, idx) => ({ productId: updated.id, url, sortOrder: idx })),
+        });
+      }
+
+      // 3. Sync Options and Variants if provided
+      // NOTE: We delete and recreate for simplicity in this implementation
+      if (req.body.options || req.body.variants) {
+        // Delete existing options (cascades to productOptionValues and variantOptionValues)
+        await tx.productOption.deleteMany({ where: { productId: updated.id } });
+        // Delete existing variants
+        await tx.productVariant.deleteMany({ where: { productId: updated.id } });
+
+        const optionMap = {};
+        const valueMap = {};
+
+        // Recreate Options
+        if (req.body.options && Array.isArray(req.body.options)) {
+          for (const opt of req.body.options) {
+            const createdOption = await tx.productOption.create({
+              data: {
+                productId: updated.id,
+                name: opt.name,
+                values: {
+                  create: (opt.values || []).map(v => ({ value: v }))
+                }
+              },
+              include: { values: true }
+            });
+            optionMap[opt.name] = createdOption.id;
+            createdOption.values.forEach(v => {
+              valueMap[`${opt.name}:${v.value}`] = v.id;
+            });
+          }
+        }
+
+        // Recreate Variants
+        if (req.body.variants && Array.isArray(req.body.variants)) {
+          for (const v of req.body.variants) {
+            const variant = await tx.productVariant.create({
+              data: {
+                productId: updated.id,
+                price: parseFloat(v.price),
+                comparePrice: v.comparePrice ? parseFloat(v.comparePrice) : null,
+                stock: parseInt(v.stock, 10) || 0,
+                images: {
+                  create: (v.images || v.imageUrls || []).map((url, idx) => ({ url, sortOrder: idx }))
+                }
+              }
+            });
+
+            // Link variant to option values
+            if (v.optionValueNames && typeof v.optionValueNames === 'object') {
+              for (const [optName, valName] of Object.entries(v.optionValueNames)) {
+                const valueId = valueMap[`${optName}:${valName}`];
+                if (valueId) {
+                  await tx.variantOptionValue.create({
+                    data: {
+                      variantId: variant.id,
+                      optionValueId: valueId
+                    }
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      return updated;
     });
-  }
 
-  const refreshed = await prisma.product.findUnique({ where: { id: p.id }, include: { images: true, seller: true, category: true, subcategory: true } });
-  return ok(res, { message: 'Product updated', data: serializeProduct(refreshed) });
+    const refreshed = await prisma.product.findUnique({
+      where: { id: parseInt(req.params.id, 10) },
+      include: {
+        images: true,
+        seller: true,
+        category: true,
+        subcategory: true,
+        options: {
+          include: {
+            values: true
+          }
+        },
+        variants: {
+          include: {
+            images: true,
+            optionValues: {
+              include: {
+                optionValue: {
+                  include: {
+                    option: true
+                  }
+                }
+              }
+            }
+          }
+        },
+      }
+    });
+
+    return ok(res, { message: 'Product updated', data: serializeProduct(refreshed) });
+  } catch (error) {
+    console.error('[updateProduct] Error:', error);
+    return fail(res, { status: 500, message: 'Failed to update product' });
+  }
 }
 
 async function deleteProduct(req, res) {
   const prisma = getPrisma();
-  const existing = await prisma.product.findUnique({ 
+  const existing = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
     include: { category: true },
   });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
   if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
-  
+
   await prisma.product.delete({ where: { id: parseInt(req.params.id, 10) } });
-  
+
+  // Decrement category product count
+  await prisma.category.update({
+    where: { id: existing.categoryId },
+    data: { noOfProducts: { decrement: 1 } },
+  });
+
   return ok(res, { message: 'Product deleted', data: null });
 }
 
 async function approveProduct(req, res) {
   const prisma = getPrisma();
-  const p = await prisma.product.findUnique({ 
+  const p = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
-    include: { images: true, seller: true, category: true },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+      options: {
+        include: {
+          values: true
+        }
+      },
+      variants: {
+        include: {
+          images: true,
+          optionValues: {
+            include: {
+              optionValue: {
+                include: {
+                  option: true
+                }
+              }
+            }
+          }
+        }
+      },
+    },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
   return ok(res, { message: 'Product approved', data: serializeProduct(p) });
@@ -408,9 +667,33 @@ async function approveProduct(req, res) {
 
 async function rejectProduct(req, res) {
   const prisma = getPrisma();
-  const p = await prisma.product.findUnique({ 
+  const p = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
-    include: { images: true, seller: true, category: true },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+      options: {
+        include: {
+          values: true
+        }
+      },
+      variants: {
+        include: {
+          images: true,
+          optionValues: {
+            include: {
+              optionValue: {
+                include: {
+                  option: true
+                }
+              }
+            }
+          }
+        }
+      },
+    },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
   return ok(res, { message: 'Product rejected', data: serializeProduct(p) });
@@ -418,7 +701,7 @@ async function rejectProduct(req, res) {
 
 async function updateStock(req, res) {
   const prisma = getPrisma();
-  const p = await prisma.product.findUnique({ 
+  const p = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
     include: { category: true },
   });
@@ -433,7 +716,31 @@ async function updateStock(req, res) {
   const updated = await prisma.product.update({
     where: { id: p.id },
     data: { stock: stockStatus },
-    include: { images: true, seller: true, category: true },
+    include: {
+      images: true,
+      seller: true,
+      category: true,
+      subcategory: true,
+      options: {
+        include: {
+          values: true
+        }
+      },
+      variants: {
+        include: {
+          images: true,
+          optionValues: {
+            include: {
+              optionValue: {
+                include: {
+                  option: true
+                }
+              }
+            }
+          }
+        }
+      },
+    },
   });
 
   return ok(res, { message: 'Stock updated', data: serializeProduct(updated) });
@@ -555,7 +862,7 @@ async function getInventoryStats(req, res) {
     const prisma = getPrisma();
     const user = req.user;
     console.log('Fetching inventory stats for user:', user?.id, user?.role);
-    
+
     // Build where clause based on user role
     const where = {};
     // If user is seller or staff, restrict low stock fetching to their own products
@@ -586,91 +893,91 @@ async function getInventoryStats(req, res) {
 
     // Get all products for this seller/admin
     const products = await prisma.product.findMany({
-    where,
-    select: { id: true, stockQuantity: true, lowStockThreshold: true, stock: true },
-  });
+      where,
+      select: { id: true, stockQuantity: true, lowStockThreshold: true, stock: true },
+    });
 
-  const productIds = products.map(p => p.id);
-  const totalProducts = products.length;
-  
-  // Sum total stock quantity across all products
-  const totalStockQuantity = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
-  
-  // Count low stock products (where stockQuantity < lowStockThreshold)
-  const lowStockProducts = products.filter(p => 
-    (p.stockQuantity || 0) < (p.lowStockThreshold || 5)
-  ).length;
+    const productIds = products.map(p => p.id);
+    const totalProducts = products.length;
 
-  // Sum delivered quantities (products in delivered orders)
-  const deliveredResult = await prisma.orderItem.aggregate({
-    where: {
-      productId: { in: productIds },
-      order: { orderStatus: 'delivered' },
-    },
-    _sum: { quantity: true },
-  });
+    // Sum total stock quantity across all products
+    const totalStockQuantity = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
 
-  // Sum reserved quantities (products in abandoned carts)
-  const reservedResult = await prisma.abandonedCartItem.aggregate({
-    where: {
-      productId: { in: productIds.map(String) },
-      cart: { status: 'abandoned' },
-    },
-    _sum: { quantity: true },
-  });
+    // Count low stock products (where stockQuantity < lowStockThreshold)
+    const lowStockProducts = products.filter(p =>
+      (p.stockQuantity || 0) < (p.lowStockThreshold || 5)
+    ).length;
 
-  // Sum shipping quantities (products in pending/processing/shipped orders ONLY)
-  // EXCLUDE cancelled, returned, and delivered orders
-  const shippingResult = await prisma.orderItem.aggregate({
-    where: {
-      productId: { in: productIds },
-      order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
-    },
-    _sum: { quantity: true },
-  });
-
-  const stats = {
-    totalProducts,
-    totalStockQuantity,
-    deliveredQuantity: Number(deliveredResult._sum.quantity || 0),
-    reservedQuantity: Number(reservedResult._sum.quantity || 0),
-    shippingQuantity: Number(shippingResult._sum.quantity || 0),
-    lowStockProducts,
-  };
-
-  // AUTO-UPDATE STOCK STATUS: Update products where available stock = 0 to unavailable
-  for (const product of products) {
-    const reserved = await prisma.abandonedCartItem.aggregate({
+    // Sum delivered quantities (products in delivered orders)
+    const deliveredResult = await prisma.orderItem.aggregate({
       where: {
-        productId: String(product.id),
+        productId: { in: productIds },
+        order: { orderStatus: 'delivered' },
+      },
+      _sum: { quantity: true },
+    });
+
+    // Sum reserved quantities (products in abandoned carts)
+    const reservedResult = await prisma.abandonedCartItem.aggregate({
+      where: {
+        productId: { in: productIds.map(String) },
         cart: { status: 'abandoned' },
       },
       _sum: { quantity: true },
     });
 
-    const shipping = await prisma.orderItem.aggregate({
+    // Sum shipping quantities (products in pending/processing/shipped orders ONLY)
+    // EXCLUDE cancelled, returned, and delivered orders
+    const shippingResult = await prisma.orderItem.aggregate({
       where: {
-        productId: product.id,
+        productId: { in: productIds },
         order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
       },
       _sum: { quantity: true },
     });
 
-    const reservedQty = Number(reserved._sum.quantity || 0);
-    const shippingQty = Number(shipping._sum.quantity || 0);
-    const availableStock = Math.max(0, (product.stockQuantity || 0) - reservedQty - shippingQty);
+    const stats = {
+      totalProducts,
+      totalStockQuantity,
+      deliveredQuantity: Number(deliveredResult._sum.quantity || 0),
+      reservedQuantity: Number(reservedResult._sum.quantity || 0),
+      shippingQuantity: Number(shippingResult._sum.quantity || 0),
+      lowStockProducts,
+    };
 
-    const shouldBeAvailable = availableStock > 0;
-    const currentStatus = product.stock;
-    const newStatus = shouldBeAvailable ? 'available' : 'unavailable';
-
-    if (currentStatus !== newStatus) {
-      await prisma.product.update({
-        where: { id: product.id },
-        data: { stock: newStatus },
+    // AUTO-UPDATE STOCK STATUS: Update products where available stock = 0 to unavailable
+    for (const product of products) {
+      const reserved = await prisma.abandonedCartItem.aggregate({
+        where: {
+          productId: String(product.id),
+          cart: { status: 'abandoned' },
+        },
+        _sum: { quantity: true },
       });
+
+      const shipping = await prisma.orderItem.aggregate({
+        where: {
+          productId: product.id,
+          order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
+        },
+        _sum: { quantity: true },
+      });
+
+      const reservedQty = Number(reserved._sum.quantity || 0);
+      const shippingQty = Number(shipping._sum.quantity || 0);
+      const availableStock = Math.max(0, (product.stockQuantity || 0) - reservedQty - shippingQty);
+
+      const shouldBeAvailable = availableStock > 0;
+      const currentStatus = product.stock;
+      const newStatus = shouldBeAvailable ? 'available' : 'unavailable';
+
+      if (currentStatus !== newStatus) {
+        await prisma.product.update({
+          where: { id: product.id },
+          data: { stock: newStatus },
+        });
+      }
     }
-  }
 
     return ok(res, {
       message: 'Inventory stats fetched',
@@ -720,13 +1027,13 @@ async function updateProductStock(req, res) {
   // Calculate new stock quantity
   const previousQuantity = product.stockQuantity || 0;
   const newQuantity = Math.max(0, previousQuantity + adjustment);
-  
+
   // Auto-update stock status based on quantity
   const newStock = newQuantity > 0 ? 'available' : 'unavailable';
 
   const updated = await prisma.product.update({
     where: { id: productId },
-    data: { 
+    data: {
       stockQuantity: newQuantity,
       stock: newStock,
     },
@@ -820,8 +1127,8 @@ async function getProductInventoryDetails(req, res) {
   const reservedQuantity = Number(inCartCount._sum.quantity || 0);
   const shippingQuantity = Number(inShippingCount._sum.quantity || 0);
   const totalStock = product.stockQuantity || 0;
-  
-  const availableStock = Math.max(0, totalStock - reservedQuantity - shippingQuantity-deliveredQuantity);
+
+  const availableStock = Math.max(0, totalStock - reservedQuantity - shippingQuantity - deliveredQuantity);
 
   return ok(res, {
     message: 'Product inventory details fetched',
@@ -839,7 +1146,7 @@ async function getProductInventoryDetails(req, res) {
 async function getCartDetails(req, res) {
   const prisma = getPrisma();
   const user = req.user;
-  
+
   // Build where clause based on user role
   const where = {};
   if (user && ['seller', 'staff'].includes(user.role)) {
@@ -895,11 +1202,11 @@ async function getCartDetails(req, res) {
   const cartDetails = [];
   for (const product of products) {
     const items = cartItems.filter(item => item.productId === String(product.id));
-    
+
     if (items.length > 0) {
       const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
       const uniqueCarts = new Set(items.map(item => item.cart.id)).size;
-      
+
       cartDetails.push({
         productId: product.id,
         productPid: product.pid,
