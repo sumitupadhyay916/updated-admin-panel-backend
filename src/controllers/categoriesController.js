@@ -148,13 +148,13 @@ async function getCategory(req, res) {
     data: {
       id: category.id,
       cid: category.cid,
-      cid: category.cid,
       name: category.name,
       slug: category.slug,
       imageUrl: category.imageUrl,
       description: category.description,
       status: category.status,
-      noOfProducts: category.noOfProducts,
+      // Use real-time count for both fields
+      noOfProducts: category._count.products,
       productCount: category._count.products,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,
