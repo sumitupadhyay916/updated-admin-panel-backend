@@ -8,8 +8,8 @@ async function listCoupons(req, res) {
   const { page, limit, search } = parsePagination(req.query);
   const where = {};
   
-  if (req.user.role === 'seller') {
-    where.createdById = req.user.id;
+  if (['seller', 'staff'].includes(req.user.role)) {
+    where.createdById = req.user.sellerId;
   }
 
   if (search) {
@@ -39,8 +39,8 @@ async function getCoupon(req, res) {
   const prisma = getPrisma();
   const where = { id: req.params.id };
   
-  if (req.user.role === 'seller') {
-    where.createdById = req.user.id;
+  if (['seller', 'staff'].includes(req.user.role)) {
+    where.createdById = req.user.sellerId;
   }
 
   const c = await prisma.coupon.findUnique({ where });
@@ -73,11 +73,11 @@ async function createCoupon(req, res) {
     productIds: req.body.productIds || [],
     categoryIds: req.body.categoryIds || [],
     isActive: req.body.isActive ?? true,
-    createdById: req.user.id,
+    createdById: req.user.sellerId || req.user.id,
   };
 
-  // If seller, ensure they don't try to create coupons for others (though logic usually implies self)
-  if (req.user.role === 'seller') {
+  // If seller or staff, ensure they don't try to create coupons for others (though logic usually implies self)
+  if (['seller', 'staff'].includes(req.user.role)) {
     // Force sellerIds to include themselves if applicableTo is specific_sellers (or just implicit)
     // For now, we just trust the createdById.
   }
@@ -90,8 +90,8 @@ async function updateCoupon(req, res) {
   const prisma = getPrisma();
   const where = { id: req.params.id };
   
-  if (req.user.role === 'seller') {
-    where.createdById = req.user.id;
+  if (['seller', 'staff'].includes(req.user.role)) {
+    where.createdById = req.user.sellerId;
   }
 
   const existing = await prisma.coupon.findUnique({ where });
@@ -127,8 +127,8 @@ async function deleteCoupon(req, res) {
   const prisma = getPrisma();
   const where = { id: req.params.id };
   
-  if (req.user.role === 'seller') {
-    where.createdById = req.user.id;
+  if (['seller', 'staff'].includes(req.user.role)) {
+    where.createdById = req.user.sellerId;
   }
 
   const existing = await prisma.coupon.findUnique({ where });
@@ -142,8 +142,8 @@ async function toggleCoupon(req, res) {
   const prisma = getPrisma();
   const where = { id: req.params.id };
   
-  if (req.user.role === 'seller') {
-    where.createdById = req.user.id;
+  if (['seller', 'staff'].includes(req.user.role)) {
+    where.createdById = req.user.sellerId;
   }
 
   const existing = await prisma.coupon.findUnique({ where });

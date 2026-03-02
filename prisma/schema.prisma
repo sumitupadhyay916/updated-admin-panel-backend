@@ -15,6 +15,7 @@ enum UserRole {
   super_admin
   admin
   seller
+  staff
   consumer
 }
 
@@ -227,6 +228,9 @@ model User {
   // Abandoned carts
   sellerAbandonedCarts AbandonedCart[] @relation("SellerAbandonedCarts")
   customerAbandonedCarts AbandonedCart[] @relation("CustomerAbandonedCarts")
+  
+  // Reviews
+  reviews Review[]
 
   // Reviews
   reviews       Review[] @relation("UserReviews")
@@ -234,6 +238,10 @@ model User {
   // Seller policies
   sellerPolicy   SellerPolicy?
   sellerFaqs     SellerFAQ[]
+
+  // Staff relationships
+  staffProfile   Staff?    @relation("StaffUserProfile")
+  sellerStaff    Staff[]   @relation("SellerStaff")
 
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
@@ -357,6 +365,7 @@ model Product {
   price            Float
   comparePrice     Float?
   stock            StockStatus   @default(available)
+  stockQuantity    Int           @default(0)
   lowStockThreshold Int          @default(5)
   reviewCount      Int           @default(0)
   isFeatured       Boolean       @default(false)
@@ -380,6 +389,7 @@ model Product {
   options          ProductOption[]
   reviews          Review[]
   averageRating    Float         @default(0)
+  reviews          Review[]
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -796,3 +806,43 @@ model SellerFAQ {
 
   @@index([sellerId])
 }
+
+model Review {
+  id          String   @id @default(cuid())
+  productId   Int
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating      Int      // 1-5 stars
+  title       String?
+  comment     String
+  isVerified  Boolean  @default(false) // Verified purchase
+  isApproved  Boolean  @default(true)  // Admin approval
+  helpfulCount Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([productId])
+  @@index([userId])
+  @@index([isApproved])
+  @@index([createdAt])
+}
+// --- Staff Management ---
+
+model Staff {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation("StaffUserProfile", fields: [userId], references: [id], onDelete: Cascade)
+  
+  sellerId    String
+  seller      User     @relation("SellerStaff", fields: [sellerId], references: [id], onDelete: Cascade)
+  
+  role        String
+  permissions String[] @default([])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sellerId])
+}
+

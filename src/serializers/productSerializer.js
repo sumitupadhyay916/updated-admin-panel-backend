@@ -18,6 +18,7 @@ function serializeProduct(p) {
     price: p.price,
     comparePrice: p.comparePrice ?? undefined,
     stock: p.stock,
+    stockQuantity: p.stockQuantity ?? 0,
     lowStockThreshold: p.lowStockThreshold,
     images: (p.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map((i) => i.url),
     reviewCount: p.reviewCount,

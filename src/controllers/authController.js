@@ -6,6 +6,7 @@ const {
   serializeSuperAdminUser,
   serializeConsumerUser,
   serializeBaseUser,
+  serializeStaffUser,
 } = require('../serializers/userSerializer');
 const { serializeAddress } = require('../serializers/addressSerializer');
 const { getPrisma } = require('../config/prisma');
@@ -15,6 +16,7 @@ function serializeUserByRole(user, addresses) {
   if (user.role === 'admin') return serializeAdminUser(user);
   if (user.role === 'seller') return serializeSellerUser(user);
   if (user.role === 'consumer') return serializeConsumerUser(user, addresses || []);
+  if (user.role === 'staff') return serializeStaffUser(user);
   return serializeBaseUser(user);
 }
 

@@ -20,22 +20,20 @@ async function listCategories(req, res) {
         select: { categoryId: true },
       });
       const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-      console.log(`[Categories] Admin ${user.id} has assigned categories:`, categoryIds);
       if (categoryIds.length > 0) {
         where.id = { in: categoryIds };
       } else {
         // Admin has no categories assigned, return empty
-        console.log(`[Categories] Admin ${user.id} has no categories assigned, returning empty`);
         return ok(res, {
           message: 'Categories fetched',
           data: [],
           meta: buildMeta({ page, limit, total: 0 }),
         });
       }
-    } else if (user && user.role === 'seller') {
-      // If user is seller, filter by categories assigned to their admin
+    } else if (user && ['seller', 'staff'].includes(user.role)) {
+      // If user is seller or staff, filter by categories assigned to their admin
       const seller = await prisma.user.findUnique({
-        where: { id: user.id },
+        where: { id: user.sellerId },
         select: { adminId: true },
       });
 
@@ -45,12 +43,10 @@ async function listCategories(req, res) {
           select: { categoryId: true },
         });
         const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-        console.log(`[Categories] Seller ${user.id} (admin: ${seller.adminId}) has assigned categories:`, categoryIds);
         if (categoryIds.length > 0) {
           where.id = { in: categoryIds };
         } else {
           // Seller's admin has no categories assigned, return empty
-          console.log(`[Categories] Seller ${user.id}'s admin has no categories assigned, returning empty`);
           return ok(res, {
             message: 'Categories fetched',
             data: [],
@@ -59,7 +55,6 @@ async function listCategories(req, res) {
         }
       } else {
         // Seller has no admin assigned, return empty
-        console.log(`[Categories] Seller ${user.id} has no admin assigned, returning empty`);
         return ok(res, {
           message: 'Categories fetched',
           data: [],

@@ -99,8 +99,81 @@ async function updateUser(req, res) {
 
 async function deleteUser(req, res) {
   const prisma = getPrisma();
-  await prisma.user.delete({ where: { id: req.params.id } });
-  return ok(res, { message: 'User deleted', data: null });
+  
+  try {
+    // First, check if user exists
+    const user = await prisma.user.findUnique({ 
+      where: { id: req.params.id },
+      include: {
+        sellers: true,
+        products: true,
+        orders: true,
+        assignedCategories: true,
+        sellerCategories: true,
+      }
+    });
+    
+    if (!user) {
+      return fail(res, { status: 404, message: 'User not found' });
+    }
+    
+    // Check for related records that would prevent deletion
+    const relatedRecords = [];
+    
+    if (user.sellers && user.sellers.length > 0) {
+      relatedRecords.push(`${user.sellers.length} seller(s)`);
+    }
+    
+    if (user.products && user.products.length > 0) {
+      relatedRecords.push(`${user.products.length} product(s)`);
+    }
+    
+    if (user.orders && user.orders.length > 0) {
+      relatedRecords.push(`${user.orders.length} order(s)`);
+    }
+    
+    if (user.assignedCategories && user.assignedCategories.length > 0) {
+      relatedRecords.push(`${user.assignedCategories.length} assigned category(ies)`);
+    }
+    
+    if (user.sellerCategories && user.sellerCategories.length > 0) {
+      relatedRecords.push(`${user.sellerCategories.length} seller category(ies)`);
+    }
+    
+    // If there are related records, return an error
+    if (relatedRecords.length > 0) {
+      return fail(res, { 
+        status: 400, 
+        message: `Cannot delete user. This user has ${relatedRecords.join(', ')}. Please reassign or delete these records first.` 
+      });
+    }
+    
+    // If no related records, proceed with deletion
+    await prisma.user.delete({ where: { id: req.params.id } });
+    return ok(res, { message: 'User deleted successfully', data: null });
+    
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    
+    // Handle Prisma foreign key constraint errors
+    if (error.code === 'P2003') {
+      return fail(res, { 
+        status: 400, 
+        message: 'Cannot delete user due to existing related records. Please remove all associated data first.' 
+      });
+    }
+    
+    // Handle other Prisma errors
+    if (error.code === 'P2025') {
+      return fail(res, { status: 404, message: 'User not found' });
+    }
+    
+    // Generic error
+    return fail(res, { 
+      status: 500, 
+      message: 'Failed to delete user. Please try again or contact support.' 
+    });
+  }
 }
 
 async function toggleUserStatus(req, res) {

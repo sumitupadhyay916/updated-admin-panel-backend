@@ -156,32 +156,95 @@ async function syncCart(req, res) {
     const { cartItems = [], guestEmail, guestName, guestPhone } = req.body;
     const userId = req.user?.id || null;
 
-    console.log(`[SyncCart] userId=${userId} items=${cartItems.length}`);
-
+    // CRITICAL FIX: If cart is empty, delete existing abandoned carts to release reserved stock
     if (!Array.isArray(cartItems) || cartItems.length === 0) {
-      return ok(res, { message: 'Empty cart', data: null });
+      if (userId) {
+        // Delete all abandoned carts for this user to release reserved stock
+        await prisma.abandonedCart.deleteMany({
+          where: { customerId: userId, status: 'abandoned' },
+        });
+      }
+      return ok(res, { message: 'Empty cart - abandoned carts cleared', data: null });
     }
-
 
     const productPids = cartItems.map((i) => i.productId).filter(Boolean);
     const products = await prisma.product.findMany({
       where: { pid: { in: productPids } },
-      select: { id: true, pid: true, sellerId: true, price: true, name: true },
+      select: { id: true, pid: true, sellerId: true, price: true, name: true, stockQuantity: true },
     });
     const productMap = new Map(products.map((p) => [p.pid, p]));
 
     const bySeller = new Map();
+    
+    // First, find existing cart for this user to exclude from reservation calculation
+    let existingCartIds = [];
+    if (userId) {
+      const existingCarts = await prisma.abandonedCart.findMany({
+        where: { customerId: userId, status: 'abandoned' },
+        select: { id: true },
+      });
+      existingCartIds = existingCarts.map(c => c.id);
+    }
+    
     for (const item of cartItems) {
       const prod = productMap.get(item.productId);
       if (!prod) continue;
+
+      // CRITICAL: Validate stock quantity - prevent over-reservation
+      const requestedQty = item.quantity || 1;
+      const maxStock = prod.stockQuantity || 0;
+      
+      // Get current reserved quantity for this product, EXCLUDING this user's existing carts
+      const currentReserved = await prisma.abandonedCartItem.aggregate({
+        where: {
+          productId: String(prod.id),
+          cart: { 
+            status: 'abandoned',
+            id: existingCartIds.length > 0 ? { notIn: existingCartIds } : undefined,
+          },
+        },
+        _sum: { quantity: true },
+      });
+      
+      const alreadyReserved = Number(currentReserved._sum.quantity || 0);
+      const availableToReserve = Math.max(0, maxStock - alreadyReserved);
+      
+      // Cap the quantity to available stock
+      const actualQty = Math.min(requestedQty, availableToReserve);
+      
+      if (actualQty <= 0) {
+        continue; // Skip this item - no stock available
+      }
+
       if (!bySeller.has(prod.sellerId)) bySeller.set(prod.sellerId, []);
-      bySeller.get(prod.sellerId).push({ item, prod });
+      bySeller.get(prod.sellerId).push({ item: { ...item, quantity: actualQty }, prod });
     }
 
     const customerName = guestName || req.user?.name || 'Guest';
     const customerEmail = guestEmail || req.user?.email || '';
     const customerPhone = guestPhone || req.user?.phone || null;
     const results = [];
+
+    // CRITICAL FIX: Get all existing carts for this user to handle deletions
+    let existingSellerCarts = [];
+    if (userId) {
+      existingSellerCarts = await prisma.abandonedCart.findMany({
+        where: { customerId: userId, status: 'abandoned' },
+        select: { id: true, sellerId: true },
+      });
+    }
+
+    // Track which sellers have items in the new cart
+    const activeSellers = new Set(bySeller.keys());
+
+    // Delete carts for sellers that are no longer in the cart
+    for (const existingCart of existingSellerCarts) {
+      if (!activeSellers.has(existingCart.sellerId)) {
+        await prisma.abandonedCart.delete({
+          where: { id: existingCart.id },
+        });
+      }
+    }
 
     for (const [sellerId, sellerItems] of bySeller.entries()) {
       const itemCount = sellerItems.reduce((s, { item }) => s + (item.quantity || 1), 0);
@@ -204,7 +267,7 @@ async function syncCart(req, res) {
             cartValue, itemCount, customerEmail, customerName, customerPhone,
             items: {
               create: sellerItems.map(({ item, prod }) => ({
-                productId: String(prod.id), // AbandonedCartItem.productId is String? – convert from Int
+                productId: String(prod.id),
                 productName: prod.name,
                 productImage: item.image || null,
                 quantity: item.quantity || 1,
@@ -223,7 +286,7 @@ async function syncCart(req, res) {
             cartValue, itemCount, status: 'abandoned',
             items: {
               create: sellerItems.map(({ item, prod }) => ({
-                productId: String(prod.id), // AbandonedCartItem.productId is String? – convert from Int
+                productId: String(prod.id),
                 productName: prod.name,
                 productImage: item.image || null,
                 quantity: item.quantity || 1,
