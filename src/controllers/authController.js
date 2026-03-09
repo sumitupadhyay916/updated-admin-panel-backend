@@ -43,7 +43,10 @@ async function profile(req, res) {
   const prisma = getPrisma();
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
-    include: { addresses: true },
+    include: { 
+      addresses: true,
+      staffProfile: true
+    },
   });
   if (!user) return fail(res, { status: 401, message: 'Unauthorized' });
   const addresses = (user.addresses || []).map(addr => serializeAddress(addr, user));

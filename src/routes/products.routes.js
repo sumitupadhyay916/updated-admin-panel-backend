@@ -84,6 +84,7 @@ router.put(
         lowStockThreshold: Joi.number().integer().optional(),
         images: Joi.array().items(Joi.string()).optional(),
         tags: Joi.array().items(Joi.string()).optional(),
+        stock: Joi.string().valid('available', 'unavailable').optional(),
         status: Joi.string().optional(),
         isFeatured: Joi.boolean().optional(),
         sellerId: Joi.string().optional(),

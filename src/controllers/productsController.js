@@ -25,37 +25,47 @@ async function listProducts(req, res) {
       ];
     }
 
-    // If user is admin (not super_admin), filter by assigned categories
+    // Filter by role
     if (user && user.role === 'admin') {
+      // 1. Seller access: Admin can ONLY see products from their own account or their assigned sellers
+      where.AND = [
+        {
+          OR: [
+            { sellerId: user.id },
+            { seller: { adminId: user.id } }
+          ]
+        }
+      ];
+
+      // 2. Category access: existing logic
       const assignedCategoryIds = await prisma.adminCategory.findMany({
         where: { adminId: user.id },
         select: { categoryId: true },
       });
       const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
       console.log(`[Products] Admin ${user.id} has assigned categories:`, categoryIds);
+
       if (categoryIds.length > 0) {
-        // If a specific categoryId is requested, verify it's in the assigned list
         if (req.query.categoryId) {
           const requestedCategoryId = parseInt(req.query.categoryId, 10);
           if (!categoryIds.includes(requestedCategoryId)) {
-            // Admin doesn't have access to this category
             console.log(`[Products] Admin ${user.id} requested category ${requestedCategoryId} but doesn't have access`);
             return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
           }
-          where.categoryId = requestedCategoryId;
+          where.AND.push({ categoryId: requestedCategoryId });
         } else {
-          // Filter by all assigned categories
-          where.categoryId = { in: categoryIds };
+          where.AND.push({ categoryId: { in: categoryIds } });
         }
-      } else {
-        // Admin has no categories assigned, return empty
-        console.log(`[Products] Admin ${user.id} has no categories assigned, returning empty`);
-        return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
+      } else if (req.query.categoryId) {
+        where.AND.push({ categoryId: parseInt(req.query.categoryId, 10) });
       }
-    } else if (user && user.role === 'seller') {
-      // Sellers can only see their own products
-      console.log(`[Products] Seller ${user.id} filtering by sellerId`);
-      where.sellerId = user.id;
+    } else if (user && (user.role === 'seller' || user.role === 'staff')) {
+      // Sellers and Staff can only see their own products (assigned to the seller)
+      const sellerId = user.sellerId;
+      if (sellerId) {
+        console.log(`[Products] ${user.role} associated with seller ${sellerId} filtering products`);
+        where.sellerId = sellerId;
+      }
     } else if (req.query.categoryId) {
       // For super_admin or other roles, allow specific categoryId filter
       where.categoryId = parseInt(req.query.categoryId, 10);
@@ -138,16 +148,25 @@ async function getProduct(req, res) {
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
 
-  // If user is admin (not super_admin), verify they have access to this product's category
-  if (user && user.role === 'admin' && p.categoryId) {
-    const hasAccess = await prisma.adminCategory.findFirst({
-      where: {
-        adminId: user.id,
-        categoryId: p.categoryId,
-      },
-    });
-    if (!hasAccess) {
-      return fail(res, { status: 403, message: 'You do not have access to this product' });
+  // If user is admin (not super_admin), verify they have access to this product's seller AND category
+  if (user && user.role === 'admin') {
+    // 1. Check seller access
+    const isOwnerOrManager = p.sellerId === user.id || p.seller?.adminId === user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+
+    // 2. Check category access
+    if (p.categoryId) {
+      const hasCatAccess = await prisma.adminCategory.findFirst({
+        where: {
+          adminId: user.id,
+          categoryId: p.categoryId,
+        },
+      });
+      if (!hasCatAccess) {
+        return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
+      }
     }
   }
 
@@ -276,10 +295,11 @@ async function createProduct(req, res) {
           description: req.body.description || req.body.name.trim(),
           price: parseFloat(req.body.price),
           stock: req.body.stock,
+          stockQuantity: parseInt(req.body.stockQuantity, 10) || 0,
           deity: req.body.deity || 'Other',
           material: req.body.material || 'Brass',
-          height: req.body.height || 10.0,
-          weight: req.body.weight || 100.0,
+          height: req.body.height || 0.0,
+          weight: req.body.weight || 0.0,
           handcrafted: req.body.handcrafted || false,
           occasion: req.body.occasion ? (req.body.occasion || []).map(toDbOccasion) : [],
           religionCategory: req.body.religionCategory || 'Hindu',
@@ -384,9 +404,21 @@ async function createProduct(req, res) {
 
 async function updateProduct(req, res) {
   const prisma = getPrisma();
-  const existing = await prisma.product.findUnique({ where: { id: parseInt(req.params.id, 10) } });
+  const existing = await prisma.product.findUnique({
+    where: { id: parseInt(req.params.id, 10) },
+    include: { seller: true },
+  });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+
+  if (['seller', 'staff'].includes(req.user.role)) {
+    if (existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+  } else if (req.user.role === 'admin') {
+    // Check if the product belongs to the admin or one of their sellers
+    const isOwnerOrManager = existing.sellerId === req.user.id || existing.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
 
   // If categoryId is being changed, validate access
   if (req.body.categoryId && req.body.categoryId !== existing.categoryId) {
@@ -657,10 +689,19 @@ async function deleteProduct(req, res) {
   const prisma = getPrisma();
   const existing = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
-    include: { category: true },
+    include: { category: true, seller: true },
   });
   if (!existing) return fail(res, { status: 404, message: 'Product not found' });
-  if (['seller', 'staff'].includes(req.user.role) && existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+
+  if (['seller', 'staff'].includes(req.user.role)) {
+    if (existing.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+  } else if (req.user.role === 'admin') {
+    // Check if the product belongs to the admin or one of their sellers
+    const isOwnerOrManager = existing.sellerId === req.user.id || existing.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
 
   await prisma.product.delete({ where: { id: parseInt(req.params.id, 10) } });
 
@@ -704,6 +745,15 @@ async function approveProduct(req, res) {
     },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
+
+  // For admin role, verify they have access to this product's seller
+  if (req.user.role === 'admin') {
+    const isOwnerOrManager = p.sellerId === req.user.id || p.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
+
   return ok(res, { message: 'Product approved', data: serializeProduct(p) });
 }
 
@@ -738,6 +788,15 @@ async function rejectProduct(req, res) {
     },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
+
+  // For admin role, verify they have access to this product's seller
+  if (req.user.role === 'admin') {
+    const isOwnerOrManager = p.sellerId === req.user.id || p.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
+
   return ok(res, { message: 'Product rejected', data: serializeProduct(p) });
 }
 
@@ -745,10 +804,19 @@ async function updateStock(req, res) {
   const prisma = getPrisma();
   const p = await prisma.product.findUnique({
     where: { id: parseInt(req.params.id, 10) },
-    include: { category: true },
+    include: { category: true, seller: true },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
-  if (['seller', 'staff'].includes(req.user.role) && p.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+  
+  if (['seller', 'staff'].includes(req.user.role)) {
+    if (p.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+  } else if (req.user.role === 'admin') {
+    // Check if the product belongs to the admin or one of their sellers
+    const isOwnerOrManager = p.sellerId === req.user.id || p.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
 
   const stockStatus = req.body.stock || req.body.stockStatus;
   if (!stockStatus || !['available', 'unavailable'].includes(stockStatus)) {
@@ -790,8 +858,27 @@ async function updateStock(req, res) {
 
 async function inventory(req, res) {
   const prisma = getPrisma();
+  const productId = parseInt(req.params.id, 10);
+  const user = req.user;
+
+  // Verify product exists and user has access
+  const product = await prisma.product.findUnique({
+    where: { id: productId },
+    include: { seller: true }
+  });
+  if (!product) return fail(res, { status: 404, message: 'Product not found' });
+
+  if (['seller', 'staff'].includes(user.role)) {
+    if (product.sellerId !== user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
+  } else if (user.role === 'admin') {
+    const isOwnerOrManager = product.sellerId === user.id || product.seller?.adminId === user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+  }
+
   const rows = await prisma.inventoryMovement.findMany({
-    where: { productId: parseInt(req.params.id, 10) },
+    where: { productId },
     orderBy: { createdAt: 'desc' },
     include: { product: true },
   });
@@ -818,15 +905,24 @@ async function lowStock(req, res) {
 
   const where = { stock: 'unavailable' };
 
-  // If user is admin (not super_admin), filter by assigned categories
+  // If user is admin (not super_admin), filter by assigned categories AND manage sellers
   if (user && user.role === 'admin') {
+    where.AND = [
+      {
+        OR: [
+          { sellerId: user.id },
+          { seller: { adminId: user.id } }
+        ]
+      }
+    ];
+
     const assignedCategoryIds = await prisma.adminCategory.findMany({
       where: { adminId: user.id },
       select: { categoryId: true },
     });
     const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
     if (categoryIds.length > 0) {
-      where.categoryId = { in: categoryIds };
+      where.AND.push({ categoryId: { in: categoryIds } });
     } else {
       return ok(res, { message: 'Unavailable products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
@@ -851,15 +947,24 @@ async function pending(req, res) {
   const user = req.user;
   const where = {};
 
-  // If user is admin (not super_admin), filter by assigned categories
+  // If user is admin (not super_admin), filter by assigned categories AND manage sellers
   if (user && user.role === 'admin') {
+    where.AND = [
+      {
+        OR: [
+          { sellerId: user.id },
+          { seller: { adminId: user.id } }
+        ]
+      }
+    ];
+
     const assignedCategoryIds = await prisma.adminCategory.findMany({
       where: { adminId: user.id },
       select: { categoryId: true },
     });
     const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
     if (categoryIds.length > 0) {
-      where.categoryId = { in: categoryIds };
+      where.AND.push({ categoryId: { in: categoryIds } });
     } else {
       return ok(res, { message: 'Products fetched', data: [], meta: buildMeta({ page, limit, total: 0 }) });
     }
@@ -911,13 +1016,22 @@ async function getInventoryStats(req, res) {
     if (user && ['seller', 'staff'].includes(user.role)) {
       where.sellerId = user.sellerId || user.id;
     } else if (user.role === 'admin') {
+      where.AND = [
+        {
+          OR: [
+            { sellerId: user.id },
+            { seller: { adminId: user.id } }
+          ]
+        }
+      ];
+
       const assignedCategoryIds = await prisma.adminCategory.findMany({
         where: { adminId: user.id },
         select: { categoryId: true },
       });
       const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
       if (categoryIds.length > 0) {
-        where.categoryId = { in: categoryIds };
+        where.AND.push({ categoryId: { in: categoryIds } });
       } else {
         return ok(res, {
           message: 'Inventory stats fetched',
@@ -1042,7 +1156,7 @@ async function updateProductStock(req, res) {
 
   const product = await prisma.product.findUnique({
     where: { id: productId },
-    include: { category: true },
+    include: { category: true, seller: true },
   });
 
   if (!product) {
@@ -1055,6 +1169,11 @@ async function updateProductStock(req, res) {
   }
 
   if (req.user.role === 'admin') {
+    const isOwnerOrManager = product.sellerId === req.user.id || product.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+
     const hasAccess = await prisma.adminCategory.findFirst({
       where: {
         adminId: req.user.id,
@@ -1062,7 +1181,7 @@ async function updateProductStock(req, res) {
       },
     });
     if (!hasAccess) {
-      return fail(res, { status: 403, message: 'You do not have access to this product' });
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
     }
   }
 
@@ -1126,6 +1245,11 @@ async function getProductInventoryDetails(req, res) {
   }
 
   if (req.user.role === 'admin') {
+    const isOwnerOrManager = product.sellerId === req.user.id || product.seller?.adminId === req.user.id;
+    if (!isOwnerOrManager) {
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
+    }
+
     const hasAccess = await prisma.adminCategory.findFirst({
       where: {
         adminId: req.user.id,
@@ -1133,7 +1257,7 @@ async function getProductInventoryDetails(req, res) {
       },
     });
     if (!hasAccess) {
-      return fail(res, { status: 403, message: 'You do not have access to this product' });
+      return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
     }
   }
 
@@ -1194,13 +1318,22 @@ async function getCartDetails(req, res) {
   if (user && ['seller', 'staff'].includes(user.role)) {
     where.sellerId = user.sellerId || user.id;
   } else if (user.role === 'admin') {
+    where.AND = [
+      {
+        OR: [
+          { sellerId: user.id },
+          { seller: { adminId: user.id } }
+        ]
+      }
+    ];
+
     const assignedCategoryIds = await prisma.adminCategory.findMany({
       where: { adminId: user.id },
       select: { categoryId: true },
     });
     const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
     if (categoryIds.length > 0) {
-      where.categoryId = { in: categoryIds };
+      where.AND.push({ categoryId: { in: categoryIds } });
     } else {
       return ok(res, {
         message: 'Cart details fetched',

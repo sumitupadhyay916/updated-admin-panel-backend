@@ -465,7 +465,26 @@ model VariantImage {
   @@index([variantId])
 }
 
+model Review {
+  id           String   @id @default(cuid())
+  productId    Int
+  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
+  rating       Int      // 1 to 5
+  title        String?
+  comment      String
+  isVerified   Boolean  @default(false) // Verified purchase
+  isApproved   Boolean  @default(true)  // Admin approval
+  helpfulCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
+  @@index([productId])
+  @@index([userId])
+  @@index([isApproved])
+  @@index([createdAt])
+}
 
 model InventoryMovement {
   id            String                @id @default(cuid())
@@ -789,42 +808,16 @@ model SellerFAQ {
   @@index([sellerId])
 }
 
-model Review {
-  id          String   @id @default(cuid())
-  productId   Int
-  product     Product  @relation("ProductReviews", fields: [productId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
-  rating      Int      // 1-5 stars
-  title       String?
-  comment     String
-  isVerified  Boolean  @default(false) // Verified purchase
-  isApproved  Boolean  @default(true)  // Admin approval
-  helpfulCount Int     @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([productId])
-  @@index([userId])
-  @@index([isApproved])
-  @@index([createdAt])
-}
-// --- Staff Management ---
-
 model Staff {
   id          String   @id @default(cuid())
   userId      String   @unique
   user        User     @relation("StaffUserProfile", fields: [userId], references: [id], onDelete: Cascade)
-  
   sellerId    String
   seller      User     @relation("SellerStaff", fields: [sellerId], references: [id], onDelete: Cascade)
-  
   role        String
   permissions String[] @default([])
-
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([sellerId])
 }
-
