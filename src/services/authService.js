@@ -4,9 +4,8 @@ const { signToken } = require('../utils/jwt');
 
 async function login({ email, password, role }) {
   const prisma = getPrisma();
-  const user = await prisma.user.findUnique({ 
+  const user = await prisma.user.findUnique({
     where: { email },
-    include: { staffProfile: true }
   });
   if (!user) return null;
   if (role) {

@@ -500,12 +500,54 @@ async function updateProduct(req, res) {
         data: updateData,
       });
 
-      // 2. Sync Images if provided
-      if (req.body.images) {
-        await tx.productImage.deleteMany({ where: { productId: updated.id } });
-        await tx.productImage.createMany({
-          data: (req.body.images || []).map((url, idx) => ({ productId: updated.id, url, sortOrder: idx })),
+      // 2. Sync Images if provided - More efficient approach
+      if (req.body.images && Array.isArray(req.body.images)) {
+        const newImages = req.body.images;
+        const currentImages = await tx.productImage.findMany({
+          where: { productId: updated.id },
+          select: { id: true, url: true }
         });
+
+        const currentUrls = currentImages.map(img => img.url);
+
+        // URLs to delete (in DB but not in request)
+        const urlsToDelete = currentUrls.filter(url => !newImages.includes(url));
+        if (urlsToDelete.length > 0) {
+          await tx.productImage.deleteMany({
+            where: {
+              productId: updated.id,
+              url: { in: urlsToDelete }
+            }
+          });
+        }
+
+        // URLs to add (in request but not in DB)
+        const urlsToAdd = newImages.filter(url => !currentUrls.includes(url));
+        if (urlsToAdd.length > 0) {
+          await tx.productImage.createMany({
+            data: urlsToAdd.map((url, idx) => ({
+              productId: updated.id,
+              url,
+              sortOrder: newImages.indexOf(url) // Preserve new order
+            }))
+          });
+        }
+
+        // Optionally update sortOrder for all images to match the new request order
+        // This ensures the order in the request is strictly followed
+        const finalImages = await tx.productImage.findMany({
+          where: { productId: updated.id }
+        });
+
+        for (const img of finalImages) {
+          const newIdx = newImages.indexOf(img.url);
+          if (newIdx !== -1 && img.sortOrder !== newIdx) {
+            await tx.productImage.update({
+              where: { id: img.id },
+              data: { sortOrder: newIdx }
+            });
+          }
+        }
       }
 
       // 3. Sync Options and Variants if provided

@@ -39,8 +39,8 @@ function transformPublicProduct(product) {
       id: v.id,
       color: colorVal || '', // Default to empty string to match frontend default states
       size: sizeVal || '',   // Default to empty string
-      price: Number(v.price),
-      salePrice: v.comparePrice ? Number(v.comparePrice) : null,
+      price: v.comparePrice && v.comparePrice > v.price ? Number(v.comparePrice) : Number(v.price),
+      salePrice: v.comparePrice && v.comparePrice > v.price ? Number(v.price) : null,
       stock: v.stock,
       image: v.images?.[0]?.url || product.images[0]?.url || null
     };
@@ -49,7 +49,7 @@ function transformPublicProduct(product) {
   // Calculate aggregate stock
   const totalStock = variants.length > 0
     ? variants.reduce((sum, v) => sum + (v.stock || 0), 0)
-    : (product.stock === 'available' ? 10 : 0);
+    : (product.stock === 'available' ? (product.stockQuantity || 0) : 0);
 
   return {
     id: product.pid,

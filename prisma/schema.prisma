@@ -230,9 +230,6 @@ model User {
   customerAbandonedCarts AbandonedCart[] @relation("CustomerAbandonedCarts")
   
   // Reviews
-  reviews Review[]
-
-  // Reviews
   reviews       Review[] @relation("UserReviews")
 
   // Seller policies
@@ -387,9 +384,8 @@ model Product {
   orderItems       OrderItem[]
   variants         ProductVariant[]
   options          ProductOption[]
-  reviews          Review[]
+  reviews          Review[]      @relation("ProductReviews")
   averageRating    Float         @default(0)
-  reviews          Review[]
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -469,21 +465,7 @@ model VariantImage {
   @@index([variantId])
 }
 
-model Review {
-  id           String        @id @default(cuid())
-  productId    Int
-  product      Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User          @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
-  rating       Int           // 1 to 5
-  title        String?
-  comment      String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
 
-  @@index([productId])
-  @@index([userId])
-}
 
 model InventoryMovement {
   id            String                @id @default(cuid())
@@ -810,9 +792,9 @@ model SellerFAQ {
 model Review {
   id          String   @id @default(cuid())
   productId   Int
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product     Product  @relation("ProductReviews", fields: [productId], references: [id], onDelete: Cascade)
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
   rating      Int      // 1-5 stars
   title       String?
   comment     String
