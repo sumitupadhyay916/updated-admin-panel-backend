@@ -7,6 +7,42 @@ const { serializePayout } = require('../serializers/payoutSerializer');
 async function getStats(userId = null, userRole = null) {
   const prisma = getPrisma();
 
+  const orderWhere = {};
+  const productWhere = {};
+  const sellerWhere = { role: 'seller' };
+  const userWhere = { role: 'consumer' };
+
+  if (userRole === 'admin' && userId) {
+    // Admin metrics are isolated to their own products or their sellers' products
+    const adminSellerFilter = {
+      OR: [
+        { sellerId: userId },
+        { seller: { adminId: userId } }
+      ]
+    };
+    Object.assign(orderWhere, adminSellerFilter);
+    Object.assign(productWhere, adminSellerFilter);
+    
+    // For sellers, check adminId or createdById
+    sellerWhere.OR = [
+      { adminId: userId },
+      { createdById: userId }
+    ];
+
+    // For consumers, count those who bought from this admin's sellers
+    userWhere.customerOrders = {
+      some: adminSellerFilter
+    };
+  } else if (['seller', 'staff'].includes(userRole) && userId) {
+    const sellerId = userId; // In this controller's context, usually resolved by auth
+    const sellerFilter = { items: { some: { sellerId } } };
+    Object.assign(orderWhere, sellerFilter);
+    productWhere.sellerId = sellerId;
+    // Sellers don't typically see seller counts or other admin data, but we filter if needed
+    sellerWhere.id = sellerId;
+    userWhere.customerOrders = { some: sellerFilter };
+  }
+
   const [
     totalOrders,
     totalProducts,
@@ -18,21 +54,24 @@ async function getStats(userId = null, userRole = null) {
     openQueries,
     revenueAgg,
   ] = await Promise.all([
-    prisma.order.count(),
-    prisma.product.count(),
-    prisma.user.count({ where: { role: 'consumer' } }),
-    prisma.user.count({ where: { role: 'seller' } }),
+    prisma.order.count({ where: orderWhere }),
+    prisma.product.count({ where: productWhere }),
+    prisma.user.count({ where: userWhere }),
+    prisma.user.count({ where: sellerWhere }),
     prisma.user.count({ where: { role: 'admin' } }),
-    prisma.order.count({ where: { orderStatus: 'pending' } }),
-    prisma.payout.count({ where: { status: 'pending' } }),
+    prisma.order.count({ where: { ...orderWhere, orderStatus: 'pending' } }),
+    prisma.payout.count({ 
+      where: userRole === 'admin' ? { seller: { adminId: userId }, status: 'pending' } : { status: 'pending' } 
+    }),
     prisma.contactQuery.count({ where: { status: { in: ['open', 'in_progress'] } } }),
-    prisma.order.aggregate({ _sum: { totalAmount: true } }),
+    prisma.order.aggregate({ 
+      where: orderWhere,
+      _sum: { totalAmount: true } 
+    }),
   ]);
 
-  // Note: Product model uses 'stock' enum (available/unavailable), not stockQuantity
-  // For low stock, we'll just count unavailable products
   const lowStockProducts = await prisma.product.count({
-    where: { stock: 'unavailable' }
+    where: { ...productWhere, stock: 'unavailable' }
   });
 
   // Get total categories count based on user role
@@ -206,7 +245,20 @@ async function sellerDashboard(req, res) {
 
 async function revenueChart(req, res) {
   const prisma = getPrisma();
-  const revenueAgg = await prisma.order.aggregate({ _sum: { totalAmount: true, platformCommission: true } });
+  const where = {};
+  if (req.user?.role === 'admin') {
+    where.OR = [
+      { sellerId: req.user.id },
+      { seller: { adminId: req.user.id } }
+    ];
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.items = { some: { sellerId: req.user.sellerId || req.user.id } };
+  }
+
+  const revenueAgg = await prisma.order.aggregate({ 
+    where,
+    _sum: { totalAmount: true, platformCommission: true } 
+  });
   const totalRevenue = Number(revenueAgg._sum.totalAmount || 0);
   const totalCommission = Number(revenueAgg._sum.platformCommission || 0);
 
@@ -219,7 +271,17 @@ async function revenueChart(req, res) {
 
 async function ordersChart(req, res) {
   const prisma = getPrisma();
-  const count = await prisma.order.count();
+  const where = {};
+  if (req.user?.role === 'admin') {
+    where.OR = [
+      { sellerId: req.user.id },
+      { seller: { adminId: req.user.id } }
+    ];
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.items = { some: { sellerId: req.user.sellerId || req.user.id } };
+  }
+
+  const count = await prisma.order.count({ where });
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
   const series = makeSeries(names, 'orders', count);
   return ok(res, { message: 'Orders chart fetched', data: series });
@@ -227,8 +289,19 @@ async function ordersChart(req, res) {
 
 async function categoriesChart(req, res) {
   const prisma = getPrisma();
+  const where = {};
+  if (req.user?.role === 'admin') {
+    where.OR = [
+      { sellerId: req.user.id },
+      { seller: { adminId: req.user.id } }
+    ];
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.sellerId = req.user.sellerId || req.user.id;
+  }
+
   const byDeity = await prisma.product.groupBy({
     by: ['deity'],
+    where,
     _count: { deity: true },
   });
   const data = byDeity
@@ -241,9 +314,20 @@ async function categoriesChart(req, res) {
 async function widgetRecentOrders(req, res) {
   const prisma = getPrisma();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 5)));
+  const where = {};
+  if (req.user?.role === 'admin') {
+    where.OR = [
+      { sellerId: req.user.id },
+      { seller: { adminId: req.user.id } }
+    ];
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.items = { some: { sellerId: req.user.sellerId || req.user.id } };
+  }
+
   const rows = await prisma.order.findMany({
+    where,
     take: limit,
-    include: { items: true, customer: true, shippingAddress: true, billingAddress: true },
+    include: { items: true, customer: true, shippingAddress: true, billingAddress: true, seller: true },
     orderBy: { createdAt: 'desc' },
   });
   return ok(res, { message: 'Recent orders fetched', data: rows.map(serializeOrder) });
@@ -252,8 +336,22 @@ async function widgetRecentOrders(req, res) {
 async function widgetPendingProducts(req, res) {
   const prisma = getPrisma();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 5)));
+  const where = { status: 'pending' };
+  if (req.user?.role === 'admin') {
+    where.AND = [
+      {
+        OR: [
+          { sellerId: req.user.id },
+          { seller: { adminId: req.user.id } }
+        ]
+      }
+    ];
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.sellerId = req.user.sellerId || req.user.id;
+  }
+
   const rows = await prisma.product.findMany({
-    where: { status: 'pending' },
+    where,
     take: limit,
     include: {
       images: true,
@@ -288,8 +386,15 @@ async function widgetPendingProducts(req, res) {
 async function widgetPendingPayouts(req, res) {
   const prisma = getPrisma();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit || 5)));
+  const where = { status: 'pending' };
+  if (req.user?.role === 'admin') {
+    where.seller = { adminId: req.user.id };
+  } else if (['seller', 'staff'].includes(req.user?.role)) {
+    where.sellerId = req.user.sellerId || req.user.id;
+  }
+
   const rows = await prisma.payout.findMany({
-    where: { status: 'pending' },
+    where,
     take: limit,
     include: { seller: true },
     orderBy: { requestedAt: 'desc' },

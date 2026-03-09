@@ -49,7 +49,7 @@ function transformPublicProduct(product) {
   // Calculate aggregate stock
   const totalStock = variants.length > 0
     ? variants.reduce((sum, v) => sum + (v.stock || 0), 0)
-    : (product.stock === 'available' ? 10 : 0);
+    : (product.stockQuantity || 0);
 
   return {
     id: product.pid,
