@@ -154,7 +154,7 @@ async function getPublicCategories(req, res) {
     return ok(res, { message: 'Categories fetched', data: transformed });
   } catch (error) {
     console.error('[PublicCatalog] Error fetching categories:', error);
-    return fail(res, { status: 500, message: 'Failed to fetch categories' });
+    return fail(res, { status: 500, message: `Failed to fetch categories: ${error.message}` });
   }
 }
 

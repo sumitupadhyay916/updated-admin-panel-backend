@@ -807,7 +807,7 @@ async function updateStock(req, res) {
     include: { category: true, seller: true },
   });
   if (!p) return fail(res, { status: 404, message: 'Product not found' });
-  
+
   if (['seller', 'staff'].includes(req.user.role)) {
     if (p.sellerId !== req.user.sellerId) return fail(res, { status: 403, message: 'Forbidden' });
   } else if (req.user.role === 'admin') {
@@ -1101,39 +1101,10 @@ async function getInventoryStats(req, res) {
       lowStockProducts,
     };
 
-    // AUTO-UPDATE STOCK STATUS: Update products where available stock = 0 to unavailable
-    for (const product of products) {
-      const reserved = await prisma.abandonedCartItem.aggregate({
-        where: {
-          productId: String(product.id),
-          cart: { status: 'abandoned' },
-        },
-        _sum: { quantity: true },
-      });
-
-      const shipping = await prisma.orderItem.aggregate({
-        where: {
-          productId: product.id,
-          order: { orderStatus: { in: ['pending', 'processing', 'shipped'] } },
-        },
-        _sum: { quantity: true },
-      });
-
-      const reservedQty = Number(reserved._sum.quantity || 0);
-      const shippingQty = Number(shipping._sum.quantity || 0);
-      const availableStock = Math.max(0, (product.stockQuantity || 0) - reservedQty - shippingQty);
-
-      const shouldBeAvailable = availableStock > 0;
-      const currentStatus = product.stock;
-      const newStatus = shouldBeAvailable ? 'available' : 'unavailable';
-
-      if (currentStatus !== newStatus) {
-        await prisma.product.update({
-          where: { id: product.id },
-          data: { stock: newStatus },
-        });
-      }
-    }
+    // NOTE: Stock status is NOT auto-updated here. It should only be changed
+    // manually by admins/sellers or via the updateProductStock endpoint.
+    // Auto-updating here caused products to incorrectly go unavailable when
+    // the inventory stats page was loaded.
 
     return ok(res, {
       message: 'Inventory stats fetched',
@@ -1189,8 +1160,12 @@ async function updateProductStock(req, res) {
   const previousQuantity = product.stockQuantity || 0;
   const newQuantity = Math.max(0, previousQuantity + adjustment);
 
-  // Auto-update stock status based on quantity
-  const newStock = newQuantity > 0 ? 'available' : 'unavailable';
+  // Auto-update stock status: only set to 'unavailable' when quantity reaches 0.
+  // Do NOT automatically re-set to 'available' — that must be done manually.
+  let newStock = product.stock; // keep current status by default
+  if (newQuantity === 0) {
+    newStock = 'unavailable';
+  }
 
   const updated = await prisma.product.update({
     where: { id: productId },
