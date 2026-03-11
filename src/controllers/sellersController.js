@@ -43,6 +43,9 @@ async function listSellers(req, res) {
       prisma.user.findMany({
         where,
         include: {
+          _count: {
+            select: { products: true }
+          },
           admin: {
             select: {
               id: true,
@@ -65,9 +68,45 @@ async function listSellers(req, res) {
       }),
     ]);
 
+    // Dynamically calculate earnings and order counts for the current set of sellers
+    const sellerIds = rows.map(r => r.id);
+    const orderItems = await prisma.orderItem.findMany({
+      where: {
+        sellerId: { in: sellerIds },
+        order: { orderStatus: { not: 'cancelled' } }
+      },
+      select: {
+        sellerId: true,
+        orderId: true,
+        totalPrice: true
+      }
+    });
+
+    const statsMap = new Map();
+    orderItems.forEach(item => {
+      if (!statsMap.has(item.sellerId)) {
+        statsMap.set(item.sellerId, { revenue: 0, orderIds: new Set() });
+      }
+      const s = statsMap.get(item.sellerId);
+      s.revenue += item.totalPrice;
+      s.orderIds.add(item.orderId);
+    });
+
+    const serializedRows = rows.map(row => {
+      const seller = serializeSellerUser(row);
+      const stats = statsMap.get(row.id) || { revenue: 0, orderIds: new Set() };
+      
+      // Use Gross Revenue to match what the seller sees on their dashboard
+      seller.totalEarnings = Number(row.totalEarnings || stats.revenue || 0);
+      seller.productCount = row._count.products;
+      seller.orderCount = stats.orderIds.size;
+      
+      return seller;
+    });
+
     return ok(res, {
       message: 'Sellers fetched',
-      data: rows.map(serializeSellerUser),
+      data: serializedRows,
       meta: buildMeta({ page, limit, total }),
     });
   } catch (error) {
@@ -552,11 +591,24 @@ async function sellerStats(req, res) {
   const seller = await prisma.user.findFirst({ where: { id: req.params.id, role: 'seller' } });
   if (!seller) return fail(res, { status: 404, message: 'Seller not found' });
 
-  const [products, orders, payouts] = await Promise.all([
+  const [products, orders, payouts, revenueData] = await Promise.all([
     prisma.product.count({ where: { sellerId: seller.id } }),
     prisma.order.count({ where: { items: { some: { sellerId: seller.id } } } }),
     prisma.payout.count({ where: { sellerId: seller.id } }),
+    prisma.orderItem.aggregate({
+      where: {
+        sellerId: seller.id,
+        order: { orderStatus: { not: 'cancelled' } }
+      },
+      _sum: {
+        totalPrice: true
+      }
+    })
   ]);
+
+  const revenue = revenueData._sum.totalPrice || 0;
+  const commissionRate = seller.commissionRate ?? 15;
+  const totalEarnings = revenue * (1 - (commissionRate / 100));
 
   return ok(res, {
     message: 'Seller stats fetched',
@@ -565,10 +617,10 @@ async function sellerStats(req, res) {
       products,
       orders,
       payouts,
-      totalEarnings: seller.totalEarnings ?? 0,
+      totalEarnings,
       availableBalance: seller.availableBalance ?? 0,
       pendingBalance: seller.pendingBalance ?? 0,
-      commissionRate: seller.commissionRate ?? 15,
+      commissionRate,
     },
   });
 }

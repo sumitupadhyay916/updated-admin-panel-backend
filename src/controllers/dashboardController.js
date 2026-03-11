@@ -7,7 +7,7 @@ const { serializePayout } = require('../serializers/payoutSerializer');
 async function getStats(userId = null, userRole = null) {
   const prisma = getPrisma();
 
-  const orderWhere = {};
+  const orderWhere = { orderStatus: { not: 'cancelled' } };
   const productWhere = {};
   const sellerWhere = { role: 'seller' };
   const userWhere = { role: 'consumer' };
@@ -34,7 +34,7 @@ async function getStats(userId = null, userRole = null) {
       some: adminSellerFilter
     };
   } else if (['seller', 'staff'].includes(userRole) && userId) {
-    const sellerId = userId; // In this controller's context, usually resolved by auth
+    const sellerId = req.user?.sellerId || userId;
     const sellerFilter = { items: { some: { sellerId } } };
     Object.assign(orderWhere, sellerFilter);
     productWhere.sellerId = sellerId;
@@ -88,8 +88,9 @@ async function getStats(userId = null, userRole = null) {
     totalCategories = assignedCategoryIds.length;
   } else if (['seller', 'staff'].includes(userRole) && userId) {
     // Seller sees categories assigned to their admin
+    const sellerId = req.user?.sellerId || userId;
     const seller = await prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: sellerId },
       select: { adminId: true },
     });
     if (seller && seller.adminId) {
@@ -136,7 +137,7 @@ async function superAdminDashboard(req, res) {
   console.log('[Dashboard] Super Admin endpoint called at:', new Date().toISOString());
   console.log('[Dashboard] User:', req.user?.email, 'Role:', req.user?.role);
 
-  const stats = await getStats(req.user?.id, req.user?.role);
+  const stats = await getStats(req.user?.id, req.user?.role, req);
   console.log('[Dashboard] Super Admin stats:', stats);
 
   // Add version to verify new code is loaded
@@ -150,7 +151,7 @@ async function superAdminDashboard(req, res) {
 }
 
 async function adminDashboard(req, res) {
-  const stats = await getStats(req.user?.id, req.user?.role);
+  const stats = await getStats(req.user?.id, req.user?.role, req);
   return ok(res, { message: 'Dashboard fetched', data: stats });
 }
 
@@ -175,9 +176,13 @@ async function sellerDashboard(req, res) {
   }
   const since = months[0].start;
 
-  // Fetch all seller's orders in last 6 months with their items
+  // Fetch all seller's orders in last 6 months with their items (excluding cancelled)
   const recentOrders = await prisma.order.findMany({
-    where: { ...orderWhere, createdAt: { gte: since } },
+    where: { 
+      ...orderWhere, 
+      createdAt: { gte: since },
+      orderStatus: { not: 'cancelled' }
+    },
     select: {
       id: true,
       createdAt: true,
@@ -220,9 +225,12 @@ async function sellerDashboard(req, res) {
     _count: { id: true },
   });
 
-  // Total revenue: sum of seller's order items (all time)
+  // Total revenue: sum of seller's order items (all time, excluding cancelled)
   const allItems = await prisma.orderItem.aggregate({
-    where: { sellerId },
+    where: { 
+      sellerId,
+      order: { orderStatus: { not: 'cancelled' } }
+    },
     _sum: { totalPrice: true },
   });
   const totalRevenue = Number(allItems._sum.totalPrice || 0);
@@ -255,6 +263,9 @@ async function revenueChart(req, res) {
     where.items = { some: { sellerId: req.user.sellerId || req.user.id } };
   }
 
+  // Exclude cancelled orders from revenue chart
+  where.orderStatus = { not: 'cancelled' };
+
   const revenueAgg = await prisma.order.aggregate({ 
     where,
     _sum: { totalAmount: true, platformCommission: true } 
@@ -280,6 +291,9 @@ async function ordersChart(req, res) {
   } else if (['seller', 'staff'].includes(req.user?.role)) {
     where.items = { some: { sellerId: req.user.sellerId || req.user.id } };
   }
+
+  // Exclude cancelled orders from orders chart
+  where.orderStatus = { not: 'cancelled' };
 
   const count = await prisma.order.count({ where });
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
