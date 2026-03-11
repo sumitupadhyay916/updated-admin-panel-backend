@@ -10,6 +10,13 @@ async function listCoupons(req, res) {
   
   if (['seller', 'staff'].includes(req.user.role)) {
     where.createdById = req.user.sellerId;
+  } else if (req.user.role === 'admin') {
+    const managedSellers = await prisma.user.findMany({
+      where: { adminId: req.user.id, role: 'seller' },
+      select: { id: true }
+    });
+    const managedSellerIds = managedSellers.map(s => s.id);
+    where.createdById = { in: [req.user.id, ...managedSellerIds] };
   }
 
   if (search) {
@@ -41,6 +48,13 @@ async function getCoupon(req, res) {
   
   if (['seller', 'staff'].includes(req.user.role)) {
     where.createdById = req.user.sellerId;
+  } else if (req.user.role === 'admin') {
+    const managedSellers = await prisma.user.findMany({
+      where: { adminId: req.user.id, role: 'seller' },
+      select: { id: true }
+    });
+    const managedSellerIds = managedSellers.map(s => s.id);
+    where.createdById = { in: [req.user.id, ...managedSellerIds] };
   }
 
   const c = await prisma.coupon.findUnique({ where });
@@ -92,6 +106,13 @@ async function updateCoupon(req, res) {
   
   if (['seller', 'staff'].includes(req.user.role)) {
     where.createdById = req.user.sellerId;
+  } else if (req.user.role === 'admin') {
+    const managedSellers = await prisma.user.findMany({
+      where: { adminId: req.user.id, role: 'seller' },
+      select: { id: true }
+    });
+    const managedSellerIds = managedSellers.map(s => s.id);
+    where.createdById = { in: [req.user.id, ...managedSellerIds] };
   }
 
   const existing = await prisma.coupon.findUnique({ where });
@@ -129,6 +150,13 @@ async function deleteCoupon(req, res) {
   
   if (['seller', 'staff'].includes(req.user.role)) {
     where.createdById = req.user.sellerId;
+  } else if (req.user.role === 'admin') {
+    const managedSellers = await prisma.user.findMany({
+      where: { adminId: req.user.id, role: 'seller' },
+      select: { id: true }
+    });
+    const managedSellerIds = managedSellers.map(s => s.id);
+    where.createdById = { in: [req.user.id, ...managedSellerIds] };
   }
 
   const existing = await prisma.coupon.findUnique({ where });
@@ -144,6 +172,13 @@ async function toggleCoupon(req, res) {
   
   if (['seller', 'staff'].includes(req.user.role)) {
     where.createdById = req.user.sellerId;
+  } else if (req.user.role === 'admin') {
+    const managedSellers = await prisma.user.findMany({
+      where: { adminId: req.user.id, role: 'seller' },
+      select: { id: true }
+    });
+    const managedSellerIds = managedSellers.map(s => s.id);
+    where.createdById = { in: [req.user.id, ...managedSellerIds] };
   }
 
   const existing = await prisma.coupon.findUnique({ where });
