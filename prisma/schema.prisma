@@ -384,7 +384,7 @@ model Product {
   orderItems       OrderItem[]
   variants         ProductVariant[]
   options          ProductOption[]
-  reviews          Review[]
+  reviews          Review[]      @relation("ProductReviews")
   averageRating    Float         @default(0)
 
   createdAt        DateTime      @default(now())
