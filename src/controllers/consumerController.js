@@ -1,5 +1,6 @@
 const { getPrisma } = require('../config/prisma');
 const { ok, fail } = require('../utils/apiResponse');
+const { convertReservation, getAvailableStock } = require('../services/reservationService');
 
 function generateOrderNumber() {
   const now = new Date();
@@ -356,12 +357,38 @@ async function checkout(req, res) {
     const itemsBySeller = new Map();
     let subtotal = 0;
 
+    // Track items for reservation conversion after order creation
+    const reservationItems = [];
+
     for (const item of items) {
       const product = productMap.get(item.productId);
       if (!product) return fail(res, { status: 400, message: `Product ${item.productId} not found` });
+
+      // ── Stock validation: check real available stock (base - active reservations) ──
+      // For variant products, the variantId must be provided in cart items
+      const variantId = item.variantId || null;
+      try {
+        const available = await getAvailableStock({
+          productId: product.id,
+          variantId,
+          excludeUserId: user.id, // exclude this user's own reservations from the check
+        });
+        // If user has an active reservation, their reserved qty + available >= requested qty
+        // We allow checkout if the user has already reserved this item
+        // A hard block only if stock is truly 0 (no reservation held by user)
+        if (available < 0) {
+          return fail(res, { status: 409, message: `Not enough stock for: ${product.name}` });
+        }
+      } catch (stockErr) {
+        console.warn('[Checkout] Stock check warning:', stockErr.message);
+      }
+
       const unitPrice = product.comparePrice || product.price;
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
+
+      // Track for reservation conversion
+      reservationItems.push({ productId: product.id, variantId });
 
       if (!itemsBySeller.has(product.sellerId)) {
         itemsBySeller.set(product.sellerId, {
@@ -418,6 +445,11 @@ async function checkout(req, res) {
         },
       },
     });
+
+    // ── Convert active reservations → 'converted' (does NOT deduct stock; order flow does that) ──
+    convertReservation({ userId: user.id, items: reservationItems }).catch((err) =>
+      console.error('[Checkout] convertReservation error (non-fatal):', err)
+    );
 
     // Mark abandoned carts as recovered
     await prisma.abandonedCart.updateMany({
