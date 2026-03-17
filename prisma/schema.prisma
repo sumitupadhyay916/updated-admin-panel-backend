@@ -370,6 +370,7 @@ model Product {
   subcategorySlug  String?
   subcategoryId    Int?
   metadata         Json?
+  hasVariants      Boolean       @default(false)
 
   sellerId         String
   seller           User          @relation("SellerProducts", fields: [sellerId], references: [id], onDelete: Restrict)
@@ -436,14 +437,25 @@ model ProductVariant {
   productId    Int
   product      Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
   price        Float
+  mrp          Float?               @default(0)
   comparePrice Float?
   stock        Int                  @default(0)
+  stockQuantity Int                 @default(0)
+  size         String?
+  color        String?
+  colorHex     String?
+  quality      String?
+  sku          String?
   images       VariantImage[]
   optionValues VariantOptionValue[]
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
 
   @@index([productId])
+  @@index([size])
+  @@index([color])
+  @@index([quality])
+  @@index([sku])
 }
 
 model VariantOptionValue {
@@ -468,7 +480,7 @@ model VariantImage {
 model Review {
   id           String   @id @default(cuid())
   productId    Int
-  product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product      Product  @relation("ProductReviews", fields: [productId], references: [id], onDelete: Cascade)
   userId       String
   user         User     @relation("UserReviews", fields: [userId], references: [id], onDelete: Cascade)
   rating       Int      // 1 to 5
@@ -820,4 +832,32 @@ model Staff {
   updatedAt   DateTime @updatedAt
 
   @@index([sellerId])
+}
+
+// --- Inventory Reservation ---
+
+enum ReservationStatus {
+  active
+  expired
+  converted
+}
+
+model InventoryReservation {
+  id        String            @id @default(cuid())
+  productId Int
+  variantId String?           // null for simple products
+  userId    String            // consumer who reserved
+  quantity  Int
+  status    ReservationStatus @default(active)
+  expiresAt DateTime          // now + 15 min at creation
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([productId])
+  @@index([variantId])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([userId, productId, variantId])
 }

@@ -13,36 +13,69 @@ function transformPublicProduct(product) {
   const metadata = product.metadata || {};
   const images = product.images.map(img => img.url);
 
-  // Extract unique sizes and colors from options/values if not in metadata
-  let sizes = metadata.sizes || [];
-  let colors = metadata.colors || [];
+  // Build sizes from variants (direct columns first)
+  const sizeSet = new Set();
+  // Build colors map: name -> hex (prefer colorHex column, then options metadata)
+  const colorMap = new Map(); // name => hex
 
-  if (product.options) {
-    const sizeOption = product.options.find(o => /size/i.test(o.name));
-    if (sizeOption && (!sizes || sizes.length === 0)) {
-      sizes = sizeOption.values.map(v => v.value);
+  product.variants.forEach(v => {
+    // Prefer direct DB columns, fallback to optionValues links
+    const colorName = v.color ||
+      v.optionValues.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+    const sizeName = v.size ||
+      v.optionValues.find(ov => /size/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+
+    if (sizeName) sizeSet.add(sizeName);
+    if (colorName && !colorMap.has(colorName)) {
+      // Use colorHex if available, otherwise check options metadata
+      colorMap.set(colorName, v.colorHex || '#CCCCCC');
     }
+  });
 
+  let sizes = sizeSet.size > 0 ? Array.from(sizeSet) : (metadata.sizes || []);
+  let colors = colorMap.size > 0
+    ? Array.from(colorMap.entries()).map(([name, hex]) => ({ name, hex }))
+    : (metadata.colors || []);
+
+  // Fallback: if still no colors, use product.options
+  if (colors.length === 0 && product.options) {
     const colorOption = product.options.find(o => /color/i.test(o.name));
-    if (colorOption && (!colors || colors.length === 0)) {
+    if (colorOption) {
       colors = colorOption.values.map(v => ({
         name: v.value,
         hex: v.metadata?.hex || '#CCCCCC'
       }));
     }
   }
+  if (sizes.length === 0 && product.options) {
+    const sizeOption = product.options.find(o => /size/i.test(o.name));
+    if (sizeOption) sizes = sizeOption.values.map(v => v.value);
+  }
 
   const variants = product.variants.map(v => {
-    const colorVal = v.optionValues.find(ov => /color/i.test(ov.optionValue.option.name))?.optionValue.value;
-    const sizeVal = v.optionValues.find(ov => /size/i.test(ov.optionValue.option.name))?.optionValue.value;
+    // Prefer direct DB columns, then fall back to optionValues relational data
+    const colorVal = v.color ||
+      v.optionValues.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+    const sizeVal = v.size ||
+      v.optionValues.find(ov => /size/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+
+    // Map the full images array so the frontend gallery can switch per-color
+    const variantImages = (v.images || []).map(img => img.url).filter(Boolean);
+
     return {
       id: v.id,
-      color: colorVal || '', // Default to empty string to match frontend default states
-      size: sizeVal || '',   // Default to empty string
-      price: v.comparePrice && v.comparePrice > v.price ? Number(v.comparePrice) : Number(v.price),
-      salePrice: v.comparePrice && v.comparePrice > v.price ? Number(v.price) : null,
+      color: colorVal,
+      colorHex: v.colorHex || null,
+      size: sizeVal,
+      // price = selling price, mrp = original price for discount display
+      price: Number(v.price),
+      mrp: v.comparePrice ? Number(v.comparePrice) : null,
+      comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
       stock: v.stock,
-      image: v.images?.[0]?.url || product.images[0]?.url || null
+      stockQuantity: v.stock,
+      // images array is used by the frontend gallery; image is the primary thumbnail
+      images: variantImages,
+      image: variantImages[0] || product.images[0]?.url || null
     };
   });
 
@@ -97,6 +130,7 @@ function transformPublicProduct(product) {
     reviewCount: product.reviewCount || 0,
     qualityLabel: product.averageRating <= 2 ? 'Good' : (product.averageRating < 5 ? 'Best' : 'Excellent'),
     isNew: product.isFeatured,
+    hasVariants: variants.length > 0,
     isBestseller: product.reviewCount > 10
   };
 }
