@@ -28,9 +28,9 @@ function startReservationCleanupJob() {
     cleanupExpiredReservations().catch((err) =>
       console.error('[ReservationCleanup] Error in interval:', err)
     );
-  }, 60 * 1000); // every 60 seconds
+  }, 600 * 1000); // every 60 seconds
 
-  console.log('[ReservationCleanup] Cleanup job started (runs every 60s)');
+  console.log('[ReservationCleanup] Cleanup job started (runs every 600s)');
 }
 
 /**

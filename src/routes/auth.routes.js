@@ -44,6 +44,23 @@ router.post(
 
 router.get('/profile', requireAuth, asyncHandler(authController.profile));
 
+router.put(
+  '/profile',
+  requireAuth,
+  validate(
+    Joi.object({
+      body: Joi.object({
+        name: Joi.string().min(1).optional(),
+        phone: Joi.string().allow('', null).optional(),
+        avatar: Joi.string().allow('', null).optional(),
+      }).required(),
+      query: Joi.object().unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.updateProfile),
+);
+
 router.post(
   '/change-password',
   requireAuth,

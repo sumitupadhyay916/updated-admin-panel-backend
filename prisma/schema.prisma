@@ -198,7 +198,8 @@ model User {
   // Admin category assignments
   assignedCategories AdminCategory[] @relation("AdminCategories")
   assignedSellerCategories SellerCategory[] @relation("AdminSellerCategories")
-  
+  categoriesCreated Category[] @relation("CategoryCreator")
+
   // Seller category assignments
   sellerCategories SellerCategory[] @relation("SellerCategories")
 
@@ -289,6 +290,9 @@ model Category {
   subcategories Subcategory[]
   assignedAdmins AdminCategory[]
   sellerCategories SellerCategory[]
+
+  createdById  String?
+  createdBy    User?          @relation("CategoryCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -591,6 +595,9 @@ model OrderItem {
   quantity      Int
   unitPrice     Float
   totalPrice    Float
+  variantId     String?
+  color         String?
+  size          String?
   sellerId      String
   sellerName    String
 

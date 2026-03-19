@@ -177,48 +177,16 @@ async function syncCart(req, res) {
 
     const bySeller = new Map();
     
-    // First, find existing cart for this user to exclude from reservation calculation
-    let existingCartIds = [];
-    if (userId) {
-      const existingCarts = await prisma.abandonedCart.findMany({
-        where: { customerId: userId, status: 'abandoned' },
-        select: { id: true },
-      });
-      existingCartIds = existingCarts.map(c => c.id);
-    }
-    
     for (const item of cartItems) {
       const prod = productMap.get(item.productId);
       if (!prod) continue;
 
-      // CRITICAL: Validate stock quantity - prevent over-reservation
       const requestedQty = item.quantity || 1;
-      const maxStock = prod.stockQuantity || 0;
+      // We no longer cap the quantity based on abandoned carts because 
+      // the user wants stock counts NOT to decrease when added to cart.
       
-      // Get current reserved quantity for this product, EXCLUDING this user's existing carts
-      const currentReserved = await prisma.abandonedCartItem.aggregate({
-        where: {
-          productId: String(prod.id),
-          cart: { 
-            status: 'abandoned',
-            id: existingCartIds.length > 0 ? { notIn: existingCartIds } : undefined,
-          },
-        },
-        _sum: { quantity: true },
-      });
-      
-      const alreadyReserved = Number(currentReserved._sum.quantity || 0);
-      const availableToReserve = Math.max(0, maxStock - alreadyReserved);
-      
-      // Cap the quantity to available stock
-      const actualQty = Math.min(requestedQty, availableToReserve);
-      
-      if (actualQty <= 0) {
-        continue; // Skip this item - no stock available
-      }
-
       if (!bySeller.has(prod.sellerId)) bySeller.set(prod.sellerId, []);
-      bySeller.get(prod.sellerId).push({ item: { ...item, quantity: actualQty }, prod });
+      bySeller.get(prod.sellerId).push({ item: { ...item, quantity: requestedQty }, prod });
     }
 
     const customerName = guestName || req.user?.name || 'Guest';
@@ -365,17 +333,26 @@ async function checkout(req, res) {
       if (!product) return fail(res, { status: 400, message: `Product ${item.productId} not found` });
 
       // ── Stock validation: check real available stock (base - active reservations) ──
-      // For variant products, the variantId must be provided in cart items
       const variantId = item.variantId || null;
+      let variant = null;
+
+      if (variantId) {
+        variant = await prisma.productVariant.findUnique({
+          where: { id: variantId },
+          include: {
+            optionValues: {
+              include: { optionValue: { include: { option: true } } }
+            }
+          }
+        });
+      }
+
       try {
         const available = await getAvailableStock({
           productId: product.id,
           variantId,
           excludeUserId: user.id, // exclude this user's own reservations from the check
         });
-        // If user has an active reservation, their reserved qty + available >= requested qty
-        // We allow checkout if the user has already reserved this item
-        // A hard block only if stock is truly 0 (no reservation held by user)
         if (available < 0) {
           return fail(res, { status: 409, message: `Not enough stock for: ${product.name}` });
         }
@@ -383,9 +360,23 @@ async function checkout(req, res) {
         console.warn('[Checkout] Stock check warning:', stockErr.message);
       }
 
-      const unitPrice = product.comparePrice || product.price;
+      // Use variant price if available, otherwise base product price
+      const unitPrice = variant ? (variant.price || product.price) : (product.comparePrice || product.price);
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
+
+      // Extract variant details
+      let color = variant?.color || null;
+      let size = variant?.size || null;
+
+      // If color/size are null on variant model, try to extract from optionValues
+      if (variant && (!color || !size)) {
+        variant.optionValues.forEach(ov => {
+          const optName = ov.optionValue.option.name.toLowerCase();
+          if (optName.includes('color')) color = ov.optionValue.value;
+          if (optName.includes('size')) size = ov.optionValue.value;
+        });
+      }
 
       // Track for reservation conversion
       reservationItems.push({ productId: product.id, variantId });
@@ -397,7 +388,15 @@ async function checkout(req, res) {
           items: [],
         });
       }
-      itemsBySeller.get(product.sellerId).items.push({ product, quantity: item.quantity, unitPrice, totalPrice });
+      itemsBySeller.get(product.sellerId).items.push({ 
+        product, 
+        quantity: item.quantity, 
+        unitPrice, 
+        totalPrice,
+        variantId,
+        color,
+        size
+      });
     }
 
     // Apply coupon
@@ -439,6 +438,9 @@ async function checkout(req, res) {
               height: item.product.height, weight: item.product.weight,
               packagingType: item.product.packagingType, fragile: item.product.fragile,
               quantity: item.quantity, unitPrice: item.unitPrice, totalPrice: item.totalPrice,
+              variantId: item.variantId,
+              color: item.color,
+              size: item.size,
               sellerId: sg.sellerId, sellerName: sg.sellerName,
             }))
           ),
@@ -491,6 +493,7 @@ async function getConsumerOrders(req, res) {
         id: item.id, productId: item.product.pid, productName: item.productName,
         productImage: item.productImage, quantity: item.quantity,
         unitPrice: item.unitPrice, totalPrice: item.totalPrice, sellerName: item.sellerName,
+        color: item.color, size: item.size,
       })),
       shippingAddress: order.shippingAddress, billingAddress: order.billingAddress,
       createdAt: order.createdAt.toISOString(),
