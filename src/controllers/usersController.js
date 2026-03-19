@@ -2,8 +2,6 @@ const { getPrisma } = require('../config/prisma');
 const { ok, fail } = require('../utils/apiResponse');
 const { parsePagination, buildMeta } = require('../utils/pagination');
 const { hashPassword } = require('../utils/password');
-const crypto = require('crypto');
-const { sendActivationEmail } = require('../services/emailService');
 const {
   serializeAdminUser,
   serializeSuperAdminUser,
@@ -67,13 +65,7 @@ async function getUser(req, res) {
 
 async function createUser(req, res) {
   const prisma = getPrisma();
-  
-  // Generate a random temporary password (it won't be used once activated)
-  const tempPassword = crypto.randomBytes(8).toString('hex');
-  const passwordHash = await hashPassword(tempPassword);
-
-  const activationToken = crypto.randomBytes(32).toString('hex');
-  const activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  const passwordHash = await hashPassword(req.body.password);
 
   const user = await prisma.user.create({
     data: {
@@ -82,16 +74,11 @@ async function createUser(req, res) {
       name: req.body.name,
       phone: req.body.phone || null,
       role: req.body.role,
-      status: 'inactive', // newly created users must activate their account
+      status: req.body.status || 'active',
       createdById: req.user.id,
       permissions: req.body.role === 'admin' ? ['manage_sellers', 'manage_products', 'manage_orders'] : [],
-      activationToken,
-      activationTokenExpires,
     },
   });
-
-  // Send activation email with dynamic role parameter
-  await sendActivationEmail(user.email, activationToken, user.name, user.role);
 
   return ok(res, { message: 'User created', data: serializeUser(user) });
 }

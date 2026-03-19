@@ -109,7 +109,7 @@ async function verifyActivationToken(req, res) {
       activationToken: String(token),
       activationTokenExpires: { gt: new Date() }
     },
-    select: { email: true, name: true, role: true }
+    select: { email: true, name: true }
   });
 
   if (!user) return fail(res, { status: 400, message: 'Invalid or expired token' });
