@@ -81,8 +81,10 @@ async function getAvailableStock({ productId, variantId = null, excludeUserId = 
     _sum: { quantity: true },
   });
 
-  const reserved = agg._sum.quantity ?? 0;
-  return Math.max(0, baseStock - reserved);
+  // We keep calculating 'reserved' for reference, but we no longer subtract it 
+  // because the user wants stock counts NOT to decrease when added to cart.
+  // The deduction should only happen at checkout (which is handled by order flow).
+  return baseStock;
 }
 
 // ─── reserveInventory ─────────────────────────────────────────────────────────

@@ -8,7 +8,8 @@ const { serializeOrder } = require('../serializers/orderSerializer');
 const { serializePayout } = require('../serializers/payoutSerializer');
 const { buildSellerWhereClause, canAdminAccessSeller } = require('../utils/sellerAuthorization');
 const { logAuthorizationFailure } = require('../utils/logger');
-
+const crypto = require('crypto');
+const { sendActivationEmail } = require('../services/emailService');
 async function listSellers(req, res) {
   const prisma = getPrisma();
   const { page, limit, search } = parsePagination(req.query);
@@ -218,7 +219,13 @@ async function createSeller(req, res) {
       }
 
       // Create seller with adminId
-      const passwordHash = await hashPassword(password);
+      // Generate a random temporary password (it won't be used once activated)
+      const tempPassword = crypto.randomBytes(8).toString('hex');
+      const passwordHash = await hashPassword(tempPassword);
+      
+      const activationToken = crypto.randomBytes(32).toString('hex');
+      const activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
       const created = await tx.user.create({
         data: {
           email,
@@ -226,7 +233,7 @@ async function createSeller(req, res) {
           name,
           phone: phone || null,
           role: 'seller',
-          status: 'active',
+          status: 'inactive', // New sellers are inactive until they set password
           businessName: businessName || null,
           businessAddress: businessAddress || (businessName ? `${businessName} Address` : null),
           gstNumber: gstNumber || null,
@@ -236,8 +243,13 @@ async function createSeller(req, res) {
           pendingBalance: 0,
           createdById: req.user?.id || null,
           adminId: admin.id,
+          activationToken,
+          activationTokenExpires,
         },
       });
+
+      // Send activation email
+      await sendActivationEmail(email, activationToken, name);
 
       return created;
     });

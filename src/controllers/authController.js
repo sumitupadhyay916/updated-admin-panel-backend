@@ -10,6 +10,7 @@ const {
 } = require('../serializers/userSerializer');
 const { serializeAddress } = require('../serializers/addressSerializer');
 const { getPrisma } = require('../config/prisma');
+const { hashPassword } = require('../utils/password');
 
 function serializeUserByRole(user, addresses) {
   if (user.role === 'super_admin') return serializeSuperAdminUser(user);
@@ -54,6 +55,25 @@ async function profile(req, res) {
   return ok(res, { message: 'Profile fetched', data: serialized });
 }
 
+async function updateProfile(req, res) {
+  const prisma = getPrisma();
+  const { name, phone, avatar } = req.body;
+
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      ...(name !== undefined && { name }),
+      ...(phone !== undefined && { phone }),
+      ...(avatar !== undefined && { avatar }),
+    },
+    include: { addresses: true },
+  });
+
+  const addresses = (updated.addresses || []).map(addr => serializeAddress(addr, updated));
+  const serialized = serializeUserByRole(updated, addresses);
+  return ok(res, { message: 'Profile updated', data: serialized });
+}
+
 async function changePassword(req, res) {
   const result = await authService.changePassword({ userId: req.user.id, ...req.body });
   if (!result.ok) {
@@ -62,6 +82,60 @@ async function changePassword(req, res) {
   return ok(res, { message: 'Password changed', data: null });
 }
 
-module.exports = { login, register, profile, changePassword };
+async function activateSeller(req, res) {
+  const { token, password } = req.body;
+  if (!token || !password) {
+    return fail(res, { status: 400, message: 'Token and new password are required' });
+  }
+
+  const prisma = getPrisma();
+  
+  const user = await prisma.user.findFirst({
+    where: {
+      activationToken: token,
+      activationTokenExpires: {
+        gt: new Date()
+      }
+    }
+  });
+
+  if (!user) {
+    return fail(res, { status: 400, message: 'Invalid or expired activation token' });
+  }
+
+  const passwordHash = await hashPassword(password);
+  
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash,
+      status: 'active',
+      activationToken: null,
+      activationTokenExpires: null
+    }
+  });
+
+  return ok(res, { message: 'Account activated successfully', data: null });
+}
+
+async function verifyActivationToken(req, res) {
+  const { token } = req.query;
+  if (!token) return fail(res, { status: 400, message: 'Token is required' });
+
+  const prisma = getPrisma();
+  const user = await prisma.user.findFirst({
+    where: {
+      activationToken: String(token),
+      activationTokenExpires: { gt: new Date() }
+    },
+    select: { email: true, name: true }
+  });
+
+  if (!user) return fail(res, { status: 400, message: 'Invalid or expired token' });
+
+  return ok(res, { message: 'Token is valid', data: user });
+}
+
+module.exports = { login, register, profile, changePassword, activateSeller, verifyActivationToken };
 
 
