@@ -240,6 +240,10 @@ model User {
   staffProfile   Staff?    @relation("StaffUserProfile")
   sellerStaff    Staff[]   @relation("SellerStaff")
 
+  // Account Activation
+  activationToken        String?
+  activationTokenExpires DateTime?
+
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 

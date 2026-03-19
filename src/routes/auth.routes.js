@@ -60,6 +60,34 @@ router.post(
   asyncHandler(authController.changePassword),
 );
 
+router.get(
+  '/verify-activation-token',
+  validate(
+    Joi.object({
+      query: Joi.object({
+        token: Joi.string().required(),
+      }).unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.verifyActivationToken),
+);
+
+router.post(
+  '/activate-seller',
+  validate(
+    Joi.object({
+      body: Joi.object({
+        token: Joi.string().required(),
+        password: Joi.string().min(6).required(),
+      }).required(),
+      query: Joi.object().unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.activateSeller),
+);
+
 module.exports = router;
 
 

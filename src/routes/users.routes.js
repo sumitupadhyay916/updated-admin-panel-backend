@@ -19,7 +19,7 @@ router.post(
     Joi.object({
       body: Joi.object({
         email: Joi.string().email().required(),
-        password: Joi.string().min(6).required(),
+        password: Joi.string().min(6).optional(),
         name: Joi.string().min(1).required(),
         phone: Joi.string().optional(),
         role: Joi.string().required(),
