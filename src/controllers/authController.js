@@ -54,6 +54,25 @@ async function profile(req, res) {
   return ok(res, { message: 'Profile fetched', data: serialized });
 }
 
+async function updateProfile(req, res) {
+  const prisma = getPrisma();
+  const { name, phone, avatar } = req.body;
+
+  const updated = await prisma.user.update({
+    where: { id: req.user.id },
+    data: {
+      ...(name !== undefined && { name }),
+      ...(phone !== undefined && { phone }),
+      ...(avatar !== undefined && { avatar }),
+    },
+    include: { addresses: true },
+  });
+
+  const addresses = (updated.addresses || []).map(addr => serializeAddress(addr, updated));
+  const serialized = serializeUserByRole(updated, addresses);
+  return ok(res, { message: 'Profile updated', data: serialized });
+}
+
 async function changePassword(req, res) {
   const result = await authService.changePassword({ userId: req.user.id, ...req.body });
   if (!result.ok) {
@@ -62,6 +81,7 @@ async function changePassword(req, res) {
   return ok(res, { message: 'Password changed', data: null });
 }
 
-module.exports = { login, register, profile, changePassword };
+module.exports = { login, register, profile, updateProfile, changePassword };
+
 
 

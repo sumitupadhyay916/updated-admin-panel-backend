@@ -71,6 +71,12 @@ async function listCategories(req, res) {
           _count: {
             select: { products: true },
           },
+          createdBy: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
         orderBy: { updatedAt: 'desc' },
         skip: (page - 1) * limit,
@@ -89,6 +95,7 @@ async function listCategories(req, res) {
       // Map real-time count to the field expected by frontend
       noOfProducts: category._count.products,
       productCount: category._count.products,
+      createdBy: category.createdBy,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,
     }));
@@ -189,6 +196,7 @@ async function createCategory(req, res) {
         imageUrl: req.body.imageUrl,
         description: req.body.description,
         noOfProducts: productCount,
+        createdById: req.user.id,
       },
       include: {
         _count: {
@@ -196,6 +204,16 @@ async function createCategory(req, res) {
         },
       },
     });
+
+    // If an admin created this, automatically assign it to them
+    if (req.user.role === 'admin') {
+      await prisma.adminCategory.create({
+        data: {
+          adminId: req.user.id,
+          categoryId: category.id,
+        },
+      });
+    }
 
     return ok(res, {
       message: 'Category created',
