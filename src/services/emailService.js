@@ -12,7 +12,7 @@ const transporter = nodemailer.createTransport({
 
 async function sendActivationEmail(to, token, sellerName) {
   // Use a fallback frontend URL or from env variables
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://innoradeapi.hireacoder.in/api/';
   const activationLink = `${frontendUrl}/activate-seller?token=${token}`;
 
   const mailOptions = {

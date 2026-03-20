@@ -11,7 +11,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
-    "create:super-admin": "node scripts/create-super-admin.js"
+    "create:super-admin": "node scripts/create-super-admin.js",
+    "build": "prisma generate && prisma migrate dev"
   },
   "dependencies": {
     "@prisma/client": "5.10.0",
