@@ -11,6 +11,9 @@ const {
 } = require('../serializers/userSerializer');
 const { serializeAddress } = require('../serializers/addressSerializer');
 
+const crypto = require('crypto');
+const { sendActivationEmail } = require('../services/emailService');
+
 function serializeUser(u) {
   if (u.role === 'super_admin') return serializeSuperAdminUser(u);
   if (u.role === 'admin') return serializeAdminUser(u);
@@ -65,22 +68,72 @@ async function getUser(req, res) {
 
 async function createUser(req, res) {
   const prisma = getPrisma();
-  const passwordHash = await hashPassword(req.body.password);
+  const { email, name, phone, role, status } = req.body;
 
-  const user = await prisma.user.create({
-    data: {
-      email: req.body.email,
-      passwordHash,
-      name: req.body.name,
-      phone: req.body.phone || null,
-      role: req.body.role,
-      status: req.body.status || 'active',
-      createdById: req.user.id,
-      permissions: req.body.role === 'admin' ? ['manage_sellers', 'manage_products', 'manage_orders'] : [],
-    },
-  });
+  try {
+    const user = await prisma.$transaction(async (tx) => {
+      // Check for duplicate user email
+      const existingUser = await tx.user.findUnique({
+        where: { email },
+      });
 
-  return ok(res, { message: 'User created', data: serializeUser(user) });
+      if (existingUser) {
+        const err = new Error('User with this email already exists');
+        err.status = 400;
+        throw err;
+      }
+
+      let passwordHash;
+      let activationToken = null;
+      let activationTokenExpires = null;
+      let initialStatus = status || 'active';
+
+      if (role === 'admin') {
+        // Generate a random temporary password (it won't be used once activated)
+        const tempPassword = crypto.randomBytes(8).toString('hex');
+        passwordHash = await hashPassword(tempPassword);
+        
+        activationToken = crypto.randomBytes(32).toString('hex');
+        activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+        initialStatus = 'inactive'; // New admins are inactive until they set password
+      } else {
+        passwordHash = await hashPassword(req.body.password);
+      }
+
+      const created = await tx.user.create({
+        data: {
+          email,
+          passwordHash,
+          name,
+          phone: phone || null,
+          role,
+          status: initialStatus,
+          createdById: req.user.id,
+          permissions: role === 'admin' ? ['manage_sellers', 'manage_products', 'manage_orders'] : [],
+          activationToken,
+          activationTokenExpires,
+        },
+      });
+
+      if (role === 'admin') {
+        // Send activation email
+        await sendActivationEmail(email, activationToken, name, 'admin');
+      }
+
+      return created;
+    });
+
+    return ok(res, { message: 'User created', data: serializeUser(user) });
+  } catch (error) {
+    if (error.status) {
+      return fail(res, { status: error.status, message: error.message });
+    }
+    // Handle Prisma unique constraint errors
+    if (error.code === 'P2002') {
+      return fail(res, { status: 400, message: 'User with this email already exists' });
+    }
+    throw error;
+  }
 }
 
 async function updateUser(req, res) {

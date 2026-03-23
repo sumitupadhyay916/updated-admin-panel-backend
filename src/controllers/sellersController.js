@@ -249,7 +249,7 @@ async function createSeller(req, res) {
       });
 
       // Send activation email
-      await sendActivationEmail(email, activationToken, name);
+      await sendActivationEmail(email, activationToken, name, 'seller');
 
       return created;
     });
