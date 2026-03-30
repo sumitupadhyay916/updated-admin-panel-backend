@@ -15,7 +15,7 @@ router.get('/:id', requireAuth, asyncHandler(categoriesController.getCategory));
 router.post(
   '/',
   requireAuth,
-  requireRole(['super_admin', 'admin']),
+  requireRole(['super_admin', 'admin', 'seller', 'staff']),
   validate(
     Joi.object({
       body: Joi.object({

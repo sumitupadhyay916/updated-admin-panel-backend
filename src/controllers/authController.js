@@ -84,6 +84,7 @@ async function changePassword(req, res) {
 
 async function activateSeller(req, res) {
   const { token, password } = req.body;
+  
   if (!token || !password) {
     return fail(res, { status: 400, message: 'Token and new password are required' });
   }
@@ -96,6 +97,10 @@ async function activateSeller(req, res) {
       activationTokenExpires: {
         gt: new Date()
       }
+    },
+    include: {
+      addresses: true,
+      staffProfile: true
     }
   });
 
@@ -105,22 +110,42 @@ async function activateSeller(req, res) {
 
   const passwordHash = await hashPassword(password);
   
-  await prisma.user.update({
+  const updatedUser = await prisma.user.update({
     where: { id: user.id },
     data: {
       passwordHash,
       status: 'active',
       activationToken: null,
       activationTokenExpires: null
+    },
+    include: {
+      addresses: true,
+      staffProfile: true
     }
   });
 
-  return ok(res, { message: 'Account activated successfully', data: null });
+  // Generate JWT token for automatic login
+  const authToken = await authService.generateToken(updatedUser);
+  
+  // Serialize user data
+  const addresses = (updatedUser.addresses || []).map(addr => serializeAddress(addr, updatedUser));
+  const serializedUser = serializeUserByRole(updatedUser, addresses);
+
+  return ok(res, { 
+    message: 'Account activated successfully', 
+    data: { 
+      user: serializedUser, 
+      token: authToken 
+    } 
+  });
 }
 
 async function verifyActivationToken(req, res) {
   const { token } = req.query;
-  if (!token) return fail(res, { status: 400, message: 'Token is required' });
+  
+  if (!token) {
+    return fail(res, { status: 400, message: 'Token is required' });
+  }
 
   const prisma = getPrisma();
   const user = await prisma.user.findFirst({
@@ -131,7 +156,9 @@ async function verifyActivationToken(req, res) {
     select: { email: true, name: true }
   });
 
-  if (!user) return fail(res, { status: 400, message: 'Invalid or expired token' });
+  if (!user) {
+    return fail(res, { status: 400, message: 'Invalid or expired token' });
+  }
 
   return ok(res, { message: 'Token is valid', data: user });
 }

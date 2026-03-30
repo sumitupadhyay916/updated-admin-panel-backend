@@ -26,7 +26,7 @@ router.post(
         businessAddress: Joi.string().min(2).optional().allow('', null),
         gstNumber: Joi.string().optional().allow('', null),
         commissionRate: Joi.number().min(0).max(50).optional(),
-        adminEmail: Joi.string().email().required(),
+        adminEmail: Joi.string().email().optional().allow('', null),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object().unknown(true),

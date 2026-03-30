@@ -54,6 +54,10 @@ async function changePassword({ userId, currentPassword, newPassword }) {
   return { ok: true };
 }
 
-module.exports = { login, register, changePassword };
+async function generateToken(user) {
+  return signToken({ sub: user.id, role: user.role });
+}
+
+module.exports = { login, register, changePassword, generateToken };
 
 
