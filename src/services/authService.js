@@ -15,6 +15,8 @@ async function login({ email, password, role }) {
       return null;
     }
   }
+  // Guard: passwordHash may be null if user was created without a password (e.g. activation flow)
+  if (!user.passwordHash) return null;
   const ok = await comparePassword(password, user.passwordHash);
   if (!ok) return null;
   if (user.status !== 'active') return { user, token: null, inactive: true };
