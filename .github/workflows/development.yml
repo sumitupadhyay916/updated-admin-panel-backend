@@ -43,10 +43,11 @@ jobs:
             npx prisma migrate deploy
 
             echo "Restart PM2..."
-            if pm2 describe innoradeapi-backend >/dev/null 2>&1; then
-              pm2 restart innoradeapi-backend
+            PM2=/home/hireacoder-innoradeapi/.nvm/versions/node/v22.22.1/bin/pm2
+            if $PM2 describe my-app >/dev/null 2>&1; then
+              $PM2 restart my-app
             else
-              pm2 start src/server.js --name innoradeapi-backend
+              $PM2 start src/server.js --name my-app
             fi
 
-            pm2 save
+            $PM2 save
