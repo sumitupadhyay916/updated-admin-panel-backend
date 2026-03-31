@@ -1,0 +1,52 @@
+name: Backend Deployment
+
+on:
+  push:
+    branches:
+      - develop-master-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy Backend via SSH
+        uses: appleboy/ssh-action@v1.1.0
+
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+
+          script: |
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            nvm use 22 || true
+
+            echo "Go to project folder..."
+            cd /home/hireacoder-innoradeapi/htdocs/innoradeapi.hireacoder.in || exit 1
+
+            echo "Pull latest code..."
+            git fetch origin develop-master-backend
+            git reset --hard origin/develop-master-backend
+            git clean -fd
+
+            echo "Install dependencies..."
+            npm install --omit=dev
+
+            echo "Run Prisma generate..."
+            npx prisma generate
+
+            echo "Run Prisma migrations..."
+            npx prisma migrate deploy
+
+            echo "Restart PM2..."
+            if pm2 describe innoradeapi-backend >/dev/null 2>&1; then
+              pm2 restart innoradeapi-backend
+            else
+              pm2 start src/server.js --name innoradeapi-backend
+            fi
+
+            pm2 save
