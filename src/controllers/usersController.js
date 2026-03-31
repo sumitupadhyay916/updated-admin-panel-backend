@@ -115,13 +115,16 @@ async function createUser(req, res) {
         },
       });
 
-      if (role === 'admin') {
-        // Send activation email
-        await sendActivationEmail(email, activationToken, name, 'admin');
-      }
-
       return created;
     });
+
+    if (user.role === 'admin' && user.activationToken) {
+      try {
+        await sendActivationEmail(user.email, user.activationToken, user.name, 'admin');
+      } catch (e) {
+        console.error('[createUser] Activation email failed:', e.message);
+      }
+    }
 
     return ok(res, { message: 'User created', data: serializeUser(user) });
   } catch (error) {

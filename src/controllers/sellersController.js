@@ -254,11 +254,14 @@ async function createSeller(req, res) {
         },
       });
 
-      // Send activation email
-      await sendActivationEmail(email, activationToken, name, 'seller');
-
       return created;
     });
+
+    try {
+      await sendActivationEmail(seller.email, seller.activationToken, seller.name, 'seller');
+    } catch (e) {
+      console.error('[createSeller] Activation email failed:', e.message);
+    }
 
     return ok(res, { message: 'Seller created', data: serializeSellerUser(seller) });
   } catch (error) {
