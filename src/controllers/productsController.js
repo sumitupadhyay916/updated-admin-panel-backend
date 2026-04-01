@@ -160,12 +160,23 @@ async function getProduct(req, res) {
 
     // 2. Check category access
     if (p.categoryId) {
-      const hasCatAccess = await prisma.adminCategory.findFirst({
+      let hasCatAccess = await prisma.adminCategory.findFirst({
         where: {
           adminId: user.id,
           categoryId: p.categoryId,
         },
       });
+      
+      // Also check if it's a seller-created category for this admin's sellers
+      if (!hasCatAccess) {
+        hasCatAccess = await prisma.sellerCategory.findFirst({
+          where: {
+            adminId: user.id,
+            categoryId: p.categoryId,
+          },
+        });
+      }
+      
       if (!hasCatAccess) {
         return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
       }
@@ -226,26 +237,41 @@ async function createProduct(req, res) {
     }
   }
 
-  // For seller/staff role, verify the category is assigned to their admin
+  // For seller/staff role, verify the category is assigned to their admin OR created by them
   if (['seller', 'staff'].includes(req.user.role)) {
+    const sellerId = req.user.role === 'seller' ? req.user.id : req.user.sellerId;
+    
     const seller = await prisma.user.findUnique({
-      where: { id: req.user.sellerId },
+      where: { id: sellerId },
       select: { adminId: true },
     });
 
-    if (!seller || !seller.adminId) {
-      return fail(res, { status: 403, message: 'You are not assigned to an admin' });
+    // Check if category is assigned to their admin
+    let hasAccess = false;
+    
+    if (seller && seller.adminId) {
+      const adminAccess = await prisma.adminCategory.findFirst({
+        where: {
+          adminId: seller.adminId,
+          categoryId: category.id,
+        },
+      });
+      if (adminAccess) hasAccess = true;
     }
 
-    const hasAccess = await prisma.adminCategory.findFirst({
-      where: {
-        adminId: seller.adminId,
-        categoryId: category.id,
-      },
-    });
+    // Check if seller created this category themselves
+    if (!hasAccess) {
+      const sellerAccess = await prisma.sellerCategory.findFirst({
+        where: {
+          sellerId: sellerId,
+          categoryId: category.id,
+        },
+      });
+      if (sellerAccess) hasAccess = true;
+    }
 
     if (!hasAccess) {
-      return fail(res, { status: 403, message: 'You can only create products in categories assigned to your admin' });
+      return fail(res, { status: 403, message: 'You can only create products in categories assigned to your admin or created by you' });
     }
   }
 
@@ -492,26 +518,41 @@ async function updateProduct(req, res) {
       }
     }
 
-    // For seller/staff role, verify the new category is assigned to their admin
+    // For seller/staff role, verify the new category is assigned to their admin OR created by them
     if (['seller', 'staff'].includes(req.user.role)) {
+      const sellerId = req.user.role === 'seller' ? req.user.id : req.user.sellerId;
+      
       const seller = await prisma.user.findUnique({
-        where: { id: req.user.sellerId },
+        where: { id: sellerId },
         select: { adminId: true },
       });
 
-      if (!seller || !seller.adminId) {
-        return fail(res, { status: 403, message: 'You are not assigned to an admin' });
+      // Check if category is assigned to their admin
+      let hasAccess = false;
+      
+      if (seller && seller.adminId) {
+        const adminAccess = await prisma.adminCategory.findFirst({
+          where: {
+            adminId: seller.adminId,
+            categoryId: newCategoryId,
+          },
+        });
+        if (adminAccess) hasAccess = true;
       }
 
-      const hasAccess = await prisma.adminCategory.findFirst({
-        where: {
-          adminId: seller.adminId,
-          categoryId: newCategoryId,
-        },
-      });
+      // Check if seller created this category themselves
+      if (!hasAccess) {
+        const sellerAccess = await prisma.sellerCategory.findFirst({
+          where: {
+            sellerId: sellerId,
+            categoryId: newCategoryId,
+          },
+        });
+        if (sellerAccess) hasAccess = true;
+      }
 
       if (!hasAccess) {
-        return fail(res, { status: 403, message: 'You can only assign products to categories assigned to your admin' });
+        return fail(res, { status: 403, message: 'You can only assign products to categories assigned to your admin or created by you' });
       }
     }
   }
@@ -1265,12 +1306,23 @@ async function updateProductStock(req, res) {
       return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
     }
 
-    const hasAccess = await prisma.adminCategory.findFirst({
+    let hasAccess = await prisma.adminCategory.findFirst({
       where: {
         adminId: req.user.id,
         categoryId: product.categoryId,
       },
     });
+    
+    // Also check if it's a seller-created category for this admin's sellers
+    if (!hasAccess) {
+      hasAccess = await prisma.sellerCategory.findFirst({
+        where: {
+          adminId: req.user.id,
+          categoryId: product.categoryId,
+        },
+      });
+    }
+    
     if (!hasAccess) {
       return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
     }
@@ -1424,12 +1476,23 @@ async function getProductInventoryDetails(req, res) {
       return fail(res, { status: 403, message: 'You do not have access to this product (invalid seller)' });
     }
 
-    const hasAccess = await prisma.adminCategory.findFirst({
+    let hasAccess = await prisma.adminCategory.findFirst({
       where: {
         adminId: req.user.id,
         categoryId: product.categoryId,
       },
     });
+    
+    // Also check if it's a seller-created category for this admin's sellers
+    if (!hasAccess) {
+      hasAccess = await prisma.sellerCategory.findFirst({
+        where: {
+          adminId: req.user.id,
+          categoryId: product.categoryId,
+        },
+      });
+    }
+    
     if (!hasAccess) {
       return fail(res, { status: 403, message: 'You do not have access to this product (invalid category)' });
     }

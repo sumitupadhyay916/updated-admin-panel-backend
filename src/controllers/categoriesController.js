@@ -31,30 +31,39 @@ async function listCategories(req, res) {
         });
       }
     } else if (user && ['seller', 'staff'].includes(user.role)) {
-      // If user is seller or staff, filter by categories assigned to their admin
+      // If user is seller or staff, show both admin-assigned categories AND seller-created categories
+      const sellerId = user.role === 'seller' ? user.id : user.sellerId;
+      
       const seller = await prisma.user.findUnique({
-        where: { id: user.sellerId },
+        where: { id: sellerId },
         select: { adminId: true },
       });
 
+      const categoryIds = [];
+
+      // Get admin-assigned categories
       if (seller && seller.adminId) {
         const assignedCategoryIds = await prisma.adminCategory.findMany({
           where: { adminId: seller.adminId },
           select: { categoryId: true },
         });
-        const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-        if (categoryIds.length > 0) {
-          where.id = { in: categoryIds };
-        } else {
-          // Seller's admin has no categories assigned, return empty
-          return ok(res, {
-            message: 'Categories fetched',
-            data: [],
-            meta: buildMeta({ page, limit, total: 0 }),
-          });
-        }
+        categoryIds.push(...assignedCategoryIds.map((ac) => ac.categoryId));
+      }
+
+      // Get seller-created categories
+      const sellerCategories = await prisma.sellerCategory.findMany({
+        where: { sellerId: sellerId },
+        select: { categoryId: true },
+      });
+      categoryIds.push(...sellerCategories.map((sc) => sc.categoryId));
+
+      // Remove duplicates
+      const uniqueCategoryIds = [...new Set(categoryIds)];
+
+      if (uniqueCategoryIds.length > 0) {
+        where.id = { in: uniqueCategoryIds };
       } else {
-        // Seller has no admin assigned, return empty
+        // No categories available, return empty
         return ok(res, {
           message: 'Categories fetched',
           data: [],
@@ -210,6 +219,24 @@ async function createCategory(req, res) {
       await prisma.adminCategory.create({
         data: {
           adminId: req.user.id,
+          categoryId: category.id,
+        },
+      });
+    }
+
+    // If a seller created this, automatically assign it to them
+    if (['seller', 'staff'].includes(req.user.role)) {
+      const sellerId = req.user.role === 'seller' ? req.user.id : req.user.sellerId;
+      
+      const seller = await prisma.user.findUnique({
+        where: { id: sellerId },
+        select: { adminId: true },
+      });
+
+      await prisma.sellerCategory.create({
+        data: {
+          adminId: seller?.adminId || req.user.id, // Use seller's admin or self if no admin
+          sellerId: sellerId,
           categoryId: category.id,
         },
       });

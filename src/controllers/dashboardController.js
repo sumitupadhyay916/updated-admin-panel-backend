@@ -243,10 +243,10 @@ async function sellerDashboard(req, res) {
       deliveredOrders,
       myProducts,
       totalReviews: Number(reviewAgg._sum.reviewCount || 0),
-      totalEarnings: Number(seller?.totalEarnings || totalRevenue || 0),
+      totalEarnings: Number(seller?.totalEarnings || totalRevenue || 0) || 0,
       availableBalance: Number(seller?.availableBalance || 0),
       pendingBalance: Number(seller?.pendingBalance || 0),
-      chartData,
+      chartData: chartData || [],
     },
   });
 }

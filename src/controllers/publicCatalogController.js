@@ -271,6 +271,13 @@ async function getPublicProducts(req, res) {
       });
       if (category) {
         where.categoryId = category.id;
+        
+        // If no specific subcategory is requested, include all products from this category
+        // including products in any of its subcategories
+        if (!req.query.subcategorySlug) {
+          // This will fetch all products where categoryId matches, regardless of subcategory
+          // No additional filter needed - categoryId alone will get all products in that category
+        }
       } else {
         // Fallback: check cid just in case
         const catByCid = await prisma.category.findFirst({

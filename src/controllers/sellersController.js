@@ -193,18 +193,24 @@ async function createSeller(req, res) {
 
   try {
     const seller = await prisma.$transaction(async (tx) => {
-      // Verify Admin exists by email
-      const admin = await tx.user.findFirst({
-        where: {
-          email: adminEmail,
-          role: { in: ['admin', 'super_admin'] },
-        },
-      });
+      let adminId = null;
 
-      if (!admin) {
-        const err = new Error('Admin with the provided email does not exist');
-        err.status = 400;
-        throw err;
+      // If adminEmail is provided, verify Admin exists
+      if (adminEmail) {
+        const admin = await tx.user.findFirst({
+          where: {
+            email: adminEmail,
+            role: { in: ['admin', 'super_admin'] },
+          },
+        });
+
+        if (!admin) {
+          const err = new Error('Admin with the provided email does not exist');
+          err.status = 400;
+          throw err;
+        }
+
+        adminId = admin.id;
       }
 
       // Check for duplicate seller email
@@ -218,7 +224,7 @@ async function createSeller(req, res) {
         throw err;
       }
 
-      // Create seller with adminId
+      // Create seller with optional adminId
       // Generate a random temporary password (it won't be used once activated)
       const tempPassword = crypto.randomBytes(8).toString('hex');
       const passwordHash = await hashPassword(tempPassword);
@@ -242,17 +248,20 @@ async function createSeller(req, res) {
           availableBalance: 0,
           pendingBalance: 0,
           createdById: req.user?.id || null,
-          adminId: admin.id,
+          adminId: adminId, // Can be null now
           activationToken,
           activationTokenExpires,
         },
       });
 
-      // Send activation email
-      await sendActivationEmail(email, activationToken, name);
-
       return created;
     });
+
+    try {
+      await sendActivationEmail(seller.email, seller.activationToken, seller.name, 'seller');
+    } catch (e) {
+      console.error('[createSeller] Activation email failed:', e.message);
+    }
 
     return ok(res, { message: 'Seller created', data: serializeSellerUser(seller) });
   } catch (error) {
