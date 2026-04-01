@@ -62,20 +62,79 @@ function transformPublicProduct(product) {
     // Map the full images array so the frontend gallery can switch per-color
     const variantImages = (v.images || []).map(img => img.url).filter(Boolean);
 
+    // 1. Build standardized attributes map (Source of Truth for variant specs key)
+    const attrs = {};
+    if (v.optionValues && Array.isArray(v.optionValues)) {
+      for (const ov of v.optionValues) {
+        const optName = ov.optionValue?.option?.name || '';
+        const optValue = ov.optionValue?.value || '';
+        if (optName && optValue && !/color/i.test(optName)) {
+          attrs[optName] = optValue;
+        }
+      }
+    }
+    // Fallback: use v.attributes if relational is empty, or size/quality
+    if (Object.keys(attrs).length === 0) {
+      if (v.size) attrs['Size'] = v.size;
+      if (v.quality) attrs['Quality'] = v.quality;
+      if (v.attributes && typeof v.attributes === 'object') {
+        Object.assign(attrs, v.attributes);
+      }
+    }
+
+    // NEW: use relational specifications if available, fall back to legacy JSON blob
+    const relationalSpecs = Array.isArray(v.specifications) && v.specifications.length > 0
+      ? v.specifications
+          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+          .map(s => ({ label: s.label, value: s.value }))
+      : null;
+
+    if (!relationalSpecs) {
+      // Legacy fallback: look up in variantAdditionalInfo by computed key
+      const variantAdditionalInfo = metadata.variantAdditionalInfo || {};
+      const nonEmptyAttrs = Object.entries(attrs).filter(([k, v]) => k && v && v.toString().trim());
+      const sortedAttrs = nonEmptyAttrs
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.toString().trim().toLowerCase()}`)
+        .join('|');
+      const variantKey = `${(colorVal || '').trim().toLowerCase()}${sortedAttrs ? '-' + sortedAttrs : ''}`;
+      const legacyInfo = variantAdditionalInfo[variantKey] || [];
+
+      return {
+        id: v.id,
+        color: colorVal,
+        colorHex: v.colorHex || null,
+        size: sizeVal,
+        price: Number(v.price),
+        mrp: v.comparePrice ? Number(v.comparePrice) : null,
+        comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
+        stock: v.stock,
+        stockQuantity: v.stock,
+        description: v.description || null,
+        images: variantImages,
+        image: variantImages[0] || product.images[0]?.url || null,
+        attributes: attrs,
+        specifications: legacyInfo,
+        additionalInfo: legacyInfo,
+      };
+    }
+
     return {
       id: v.id,
       color: colorVal,
       colorHex: v.colorHex || null,
       size: sizeVal,
-      // price = selling price, mrp = original price for discount display
       price: Number(v.price),
       mrp: v.comparePrice ? Number(v.comparePrice) : null,
       comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
       stock: v.stock,
       stockQuantity: v.stock,
-      // images array is used by the frontend gallery; image is the primary thumbnail
+      description: v.description || null,
       images: variantImages,
-      image: variantImages[0] || product.images[0]?.url || null
+      image: variantImages[0] || product.images[0]?.url || null,
+      attributes: attrs,
+      specifications: relationalSpecs,
+      additionalInfo: relationalSpecs,
     };
   });
 
@@ -208,23 +267,31 @@ async function getPublicProducts(req, res) {
     // Filter by category slug
     if (req.query.categorySlug) {
       const category = await prisma.category.findFirst({
-        where: { slug: req.query.categorySlug, status: 'active' }
+        where: { slug: { equals: req.query.categorySlug, mode: 'insensitive' }, status: 'active' }
       });
       if (category) {
         where.categoryId = category.id;
       } else {
-        return ok(res, {
-          message: 'Products fetched',
-          data: [],
-          meta: { page, limit, total: 0, totalPages: 0 }
+        // Fallback: check cid just in case
+        const catByCid = await prisma.category.findFirst({
+          where: { cid: req.query.categorySlug, status: 'active' }
         });
+        if (catByCid) {
+          where.categoryId = catByCid.id;
+        } else {
+          return ok(res, {
+            message: 'Products fetched',
+            data: [],
+            meta: { page, limit, total: 0, totalPages: 0 }
+          });
+        }
       }
     }
 
     // Filter by subcategory slug — check both subcategoryId (relational) and subcategorySlug (legacy)
     if (req.query.subcategorySlug) {
       const sub = await prisma.subcategory.findFirst({
-        where: { slug: req.query.subcategorySlug }
+        where: { slug: { equals: req.query.subcategorySlug, mode: 'insensitive' } }
       });
       if (sub) {
         // Use AND wrapper so it doesn't conflict with the search OR filter below
@@ -272,6 +339,7 @@ async function getPublicProducts(req, res) {
           variants: {
             include: {
               images: { orderBy: { sortOrder: 'asc' } },
+              specifications: { orderBy: { sortOrder: 'asc' } },
               optionValues: {
                 include: {
                   optionValue: {
@@ -336,6 +404,7 @@ async function getPublicProductByPid(req, res) {
         variants: {
           include: {
             images: { orderBy: { sortOrder: 'asc' } },
+            specifications: { orderBy: { sortOrder: 'asc' } },
             optionValues: {
               include: {
                 optionValue: {

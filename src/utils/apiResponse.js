@@ -1,4 +1,4 @@
-function ok(res, { message = 'OK', data, meta,status = 200 } = {}) {
+function ok(res, { message = 'OK', data, meta, status = 200 } = {}) {
   const payload = { success: true, message };
   if (data !== undefined) payload.data = data;
   if (meta !== undefined) payload.meta = meta;

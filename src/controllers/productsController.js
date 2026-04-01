@@ -88,6 +88,7 @@ async function listProducts(req, res) {
           variants: {
             include: {
               images: true,
+              specifications: true,
               optionValues: {
                 include: {
                   optionValue: {
@@ -133,6 +134,7 @@ async function getProduct(req, res) {
       variants: {
         include: {
           images: true,
+          specifications: true,
           optionValues: {
             include: {
               optionValue: {
@@ -306,7 +308,10 @@ async function createProduct(req, res) {
             ageGroups: Array.isArray(req.body.ageGroups) ? req.body.ageGroups : undefined,
             isNew: req.body.isNew === true,
             isBestseller: req.body.isBestseller === true,
-            dimensions: req.body.dimensions || undefined
+            dimensions: req.body.dimensions || undefined,
+            additionalInfo: req.body.additionalInfo || [],
+            variantAdditionalInfo: req.body.variantAdditionalInfo || undefined,
+            additionalInfoByColor: req.body.additionalInfoByColor || undefined
           },
           deity: req.body.deity || 'Other',
           material: req.body.material || 'Brass',
@@ -331,15 +336,20 @@ async function createProduct(req, res) {
       const valueMap = {};  // Maps "OptionName:ValueName" to created Value ID
 
       if (req.body.hasVariants && Array.isArray(req.body.variants)) {
-        // Collect unique values for dynamically observed options (size, color, quality)
-        const detectedOptions = { Size: new Set(), Color: new Set(), Quality: new Set() };
+        // Collect unique values for dynamically observed options from v.attributes and v.color
+        const detectedOptions = { Color: new Set() };
 
         req.body.variants.forEach(v => {
-          if (v.size) detectedOptions.Size.add(v.size);
-          // If hex is provided in color string like "#hex (Name)", we just extract the name for the DB linkage 
-          // but for simplicity we'll just store whatever string the frontend sends
           if (v.color) detectedOptions.Color.add(v.color);
-          if (v.quality) detectedOptions.Quality.add(v.quality);
+          
+          if (v.attributes && typeof v.attributes === 'object') {
+            for (const [key, value] of Object.entries(v.attributes)) {
+              if (value) {
+                if (!detectedOptions[key]) detectedOptions[key] = new Set();
+                detectedOptions[key].add(value);
+              }
+            }
+          }
         });
 
         // Create options for whichever were populated
@@ -368,28 +378,43 @@ async function createProduct(req, res) {
             data: {
               productId: product.id,
               price: parseFloat(v.price) || 0,
+              mrp: v.mrp !== undefined ? parseFloat(v.mrp) : null,
               comparePrice: v.mrp ? parseFloat(v.mrp) : (v.comparePrice ? parseFloat(v.comparePrice) : null),
               stock: parseInt(v.stockQuantity ?? v.stock, 10) || 0,
-              size: v.size || null,
+              stockQuantity: parseInt(v.stockQuantity ?? v.stock ?? 0, 10),
+              size: v.attributes?.Size || null, // fallback for schema
               color: v.color || null,
-              quality: v.quality || null,
+              colorHex: v.colorHex || null,
+              quality: v.attributes?.Quality || null, // fallback for schema
               sku: v.sku || null,
+              description: v.description || null,
               images: {
                 create: (v.images || v.imageUrls || []).map((url, idx) => ({ url, sortOrder: idx }))
+              },
+              specifications: {
+                create: (v.specifications || []).map((spec, idx) => ({
+                  label: spec.label,
+                  value: spec.value,
+                  sortOrder: spec.sortOrder ?? idx
+                }))
               }
             }
           });
 
           // Link variant to option values based on the detected properties
           const linksToCreate = [];
-          if (v.size && valueMap[`Size:${v.size}`]) {
-            linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Size:${v.size}`] });
-          }
+          
           if (v.color && valueMap[`Color:${v.color}`]) {
             linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Color:${v.color}`] });
           }
-          if (v.quality && valueMap[`Quality:${v.quality}`]) {
-            linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Quality:${v.quality}`] });
+          
+          if (v.attributes && typeof v.attributes === 'object') {
+            for (const [key, value] of Object.entries(v.attributes)) {
+              const mapKey = `${key}:${value}`;
+              if (value && valueMap[mapKey]) {
+                linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[mapKey] });
+              }
+            }
           }
 
           if (linksToCreate.length > 0) {
@@ -416,6 +441,7 @@ async function createProduct(req, res) {
         variants: {
           include: {
             images: true,
+            specifications: true,
             optionValues: {
               include: { optionValue: { include: { option: true } } }
             }
@@ -576,8 +602,12 @@ async function updateProduct(req, res) {
       if (req.body.isNew !== undefined) newMeta.isNew = req.body.isNew;
       if (req.body.isBestseller !== undefined) newMeta.isBestseller = req.body.isBestseller;
       if (req.body.dimensions !== undefined) newMeta.dimensions = req.body.dimensions;
+      if (req.body.additionalInfo !== undefined) newMeta.additionalInfo = req.body.additionalInfo;
+      if (req.body.variantAdditionalInfo !== undefined) newMeta.variantAdditionalInfo = req.body.variantAdditionalInfo;
+      if (req.body.additionalInfoByColor !== undefined) newMeta.additionalInfoByColor = req.body.additionalInfoByColor;
 
       updateData.metadata = newMeta;
+      console.log(`[Products] Updating product ${req.params.id} metadata:`, JSON.stringify(newMeta, null, 2));
 
       const updated = await tx.product.update({
         where: { id: parseInt(req.params.id, 10) },
@@ -645,12 +675,20 @@ async function updateProduct(req, res) {
           const optionMap = {};
           const valueMap = {};
 
-          // Collect unique values
-          const detectedOptions = { Size: new Set(), Color: new Set(), Quality: new Set() };
+          // Collect unique values for dynamically observed options from v.attributes and v.color
+          const detectedOptions = { Color: new Set() };
+
           req.body.variants.forEach(v => {
-            if (v.size) detectedOptions.Size.add(v.size);
             if (v.color) detectedOptions.Color.add(v.color);
-            if (v.quality) detectedOptions.Quality.add(v.quality);
+            
+            if (v.attributes && typeof v.attributes === 'object') {
+              for (const [key, value] of Object.entries(v.attributes)) {
+                if (value) {
+                  if (!detectedOptions[key]) detectedOptions[key] = new Set();
+                  detectedOptions[key].add(value);
+                }
+              }
+            }
           });
 
           // Recreate Options
@@ -683,27 +721,38 @@ async function updateProduct(req, res) {
                 comparePrice: v.mrp ? parseFloat(v.mrp) : (v.comparePrice ? parseFloat(v.comparePrice) : null),
                 stock: parseInt(v.stockQuantity ?? v.stock, 10) || 0,
                 stockQuantity: parseInt(v.stockQuantity ?? v.stock ?? 0, 10),
-                size: v.size || null,
+                size: v.attributes?.Size || null, // fallback for schema
                 color: v.color || null,
                 colorHex: v.colorHex || null,
-                quality: v.quality || null,
+                quality: v.attributes?.Quality || null, // fallback for schema
                 sku: v.sku || null,
+                description: v.description || null,
                 images: {
                   create: (v.images || v.imageUrls || []).map((url, idx) => ({ url, sortOrder: idx }))
+                },
+                specifications: {
+                  create: (v.specifications || []).map((spec, idx) => ({
+                    label: spec.label,
+                    value: spec.value,
+                    sortOrder: spec.sortOrder ?? idx
+                  }))
                 }
               }
             });
 
             // Link variant to option values
             const linksToCreate = [];
-            if (v.size && valueMap[`Size:${v.size}`]) {
-              linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Size:${v.size}`] });
-            }
             if (v.color && valueMap[`Color:${v.color}`]) {
               linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Color:${v.color}`] });
             }
-            if (v.quality && valueMap[`Quality:${v.quality}`]) {
-              linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[`Quality:${v.quality}`] });
+
+            if (v.attributes && typeof v.attributes === 'object') {
+              for (const [key, value] of Object.entries(v.attributes)) {
+                const mapKey = `${key}:${value}`;
+                if (value && valueMap[mapKey]) {
+                  linksToCreate.push({ variantId: variant.id, optionValueId: valueMap[mapKey] });
+                }
+              }
             }
 
             if (linksToCreate.length > 0) {
@@ -731,6 +780,7 @@ async function updateProduct(req, res) {
         variants: {
           include: {
             images: true,
+            specifications: true,
             optionValues: {
               include: {
                 optionValue: {
