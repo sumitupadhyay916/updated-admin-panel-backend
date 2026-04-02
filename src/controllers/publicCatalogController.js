@@ -6,63 +6,272 @@ const { parsePagination } = require('../utils/pagination');
  * GET /api/public/categories
  * Returns categories in moms-love shape with subcategories
  */
+/**
+ * Helper to transform product to moms-love shape
+ */
+function transformPublicProduct(product) {
+  const metadata = product.metadata || {};
+  const images = product.images.map(img => img.url);
+
+  // Build sizes from variants (direct columns first)
+  const sizeSet = new Set();
+  // Build colors map: name -> hex (prefer colorHex column, then options metadata)
+  const colorMap = new Map(); // name => hex
+
+  product.variants.forEach(v => {
+    // Prefer direct DB columns, fallback to optionValues links
+    const colorName = v.color ||
+      v.optionValues.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+    const sizeName = v.size ||
+      v.optionValues.find(ov => /size/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+
+    if (sizeName) sizeSet.add(sizeName);
+    if (colorName && !colorMap.has(colorName)) {
+      // Use colorHex if available, otherwise check options metadata
+      colorMap.set(colorName, v.colorHex || '#CCCCCC');
+    }
+  });
+
+  let sizes = sizeSet.size > 0 ? Array.from(sizeSet) : (metadata.sizes || []);
+  let colors = colorMap.size > 0
+    ? Array.from(colorMap.entries()).map(([name, hex]) => ({ name, hex }))
+    : (metadata.colors || []);
+
+  // Fallback: if still no colors, use product.options
+  if (colors.length === 0 && product.options) {
+    const colorOption = product.options.find(o => /color/i.test(o.name));
+    if (colorOption) {
+      colors = colorOption.values.map(v => ({
+        name: v.value,
+        hex: v.metadata?.hex || '#CCCCCC'
+      }));
+    }
+  }
+  if (sizes.length === 0 && product.options) {
+    const sizeOption = product.options.find(o => /size/i.test(o.name));
+    if (sizeOption) sizes = sizeOption.values.map(v => v.value);
+  }
+
+  const variants = product.variants.map(v => {
+    // Prefer direct DB columns, then fall back to optionValues relational data
+    const colorVal = v.color ||
+      v.optionValues.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+    const sizeVal = v.size ||
+      v.optionValues.find(ov => /size/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+
+    // Map the full images array so the frontend gallery can switch per-color
+    const variantImages = (v.images || []).map(img => img.url).filter(Boolean);
+
+    // 1. Build standardized attributes map (Source of Truth for variant specs key)
+    const attrs = {};
+    if (v.optionValues && Array.isArray(v.optionValues)) {
+      for (const ov of v.optionValues) {
+        const optName = ov.optionValue?.option?.name || '';
+        const optValue = ov.optionValue?.value || '';
+        if (optName && optValue && !/color/i.test(optName)) {
+          attrs[optName] = optValue;
+        }
+      }
+    }
+    // Fallback: use v.attributes if relational is empty, or size/quality
+    if (Object.keys(attrs).length === 0) {
+      if (v.size) attrs['Size'] = v.size;
+      if (v.quality) attrs['Quality'] = v.quality;
+      if (v.attributes && typeof v.attributes === 'object') {
+        Object.assign(attrs, v.attributes);
+      }
+    }
+
+    // NEW: use relational specifications if available, fall back to legacy JSON blob
+    const relationalSpecs = Array.isArray(v.specifications) && v.specifications.length > 0
+      ? v.specifications
+          .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+          .map(s => ({ label: s.label, value: s.value }))
+      : null;
+
+    if (!relationalSpecs) {
+      // Legacy fallback: look up in variantAdditionalInfo by computed key
+      const variantAdditionalInfo = metadata.variantAdditionalInfo || {};
+      const nonEmptyAttrs = Object.entries(attrs).filter(([k, v]) => k && v && v.toString().trim());
+      const sortedAttrs = nonEmptyAttrs
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.toString().trim().toLowerCase()}`)
+        .join('|');
+      const variantKey = `${(colorVal || '').trim().toLowerCase()}${sortedAttrs ? '-' + sortedAttrs : ''}`;
+      const legacyInfo = variantAdditionalInfo[variantKey] || [];
+
+      return {
+        id: v.id,
+        color: colorVal,
+        colorHex: v.colorHex || null,
+        size: sizeVal,
+        price: Number(v.price),
+        mrp: v.comparePrice ? Number(v.comparePrice) : null,
+        comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
+        stock: v.stock,
+        stockQuantity: v.stock,
+        description: v.description || null,
+        images: variantImages,
+        image: variantImages[0] || product.images[0]?.url || null,
+        attributes: attrs,
+        specifications: legacyInfo,
+        additionalInfo: legacyInfo,
+      };
+    }
+
+    return {
+      id: v.id,
+      color: colorVal,
+      colorHex: v.colorHex || null,
+      size: sizeVal,
+      price: Number(v.price),
+      mrp: v.comparePrice ? Number(v.comparePrice) : null,
+      comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
+      stock: v.stock,
+      stockQuantity: v.stock,
+      description: v.description || null,
+      images: variantImages,
+      image: variantImages[0] || product.images[0]?.url || null,
+      attributes: attrs,
+      specifications: relationalSpecs,
+      additionalInfo: relationalSpecs,
+    };
+  });
+
+  // Calculate aggregate stock
+  const totalStock = variants.length > 0
+    ? variants.reduce((sum, v) => sum + (v.stock || 0), 0)
+    : (product.stock === 'available' ? (product.stockQuantity || 0) : 0);
+
+  const firstVariant = variants.length > 0 ? variants[0] : null;
+
+  // Use variant images if product images are missing or placeholder
+  // We prefer 'Product Images' over 'Variant Image' (swatch).
+  // Per Admin Panel logic, the swatch is at index 0, and product images follow.
+  let variantFallbackImages = firstVariant && firstVariant.images ? firstVariant.images : [];
+  if (variantFallbackImages.length > 1) {
+    // Skip the first image (the Variant Image / swatch) to show the actual product in the listing
+    variantFallbackImages = variantFallbackImages.slice(1);
+  }
+
+  const displayImages = (images.length > 0 && images[0] !== '/images/placeholder.jpg')
+    ? images
+    : (variantFallbackImages.length > 0 ? variantFallbackImages : (firstVariant && firstVariant.images ? firstVariant.images : ['/images/placeholder.jpg']));
+
+  // Base price and sale price fallback
+  let basePrice = product.price || 0;
+  let baseCompare = product.comparePrice || null;
+
+  if (basePrice === 0 && firstVariant) {
+    basePrice = firstVariant.price || 0;
+    baseCompare = firstVariant.mrp || firstVariant.comparePrice || null;
+  }
+
+  return {
+    id: product.pid,
+    pid: product.pid,
+    name: product.name,
+    description: product.description || '',
+    images: displayImages,
+    category: product.category.slug || product.category.cid,
+    subcategory: product.subcategory?.slug || product.subcategorySlug || null,
+    subcategorySlug: product.subcategorySlug || product.subcategory?.slug || null,
+    brand: metadata.brand || product.seller.businessName || product.seller.name,
+    sizes,
+    colors,
+    ageGroups: metadata.ageGroups || [],
+    stock: totalStock,
+    care: metadata.care || '',
+    materials: metadata.materials || '',
+    variants,
+    // Moms-love price logic:
+    // If discount: price = original(strikethrough), salePrice = current(discounted)
+    // If no discount: price = current, salePrice = null
+    price: baseCompare && baseCompare > basePrice
+      ? baseCompare
+      : basePrice,
+    salePrice: baseCompare && baseCompare > basePrice
+      ? basePrice
+      : null,
+    discount: (baseCompare && baseCompare > basePrice)
+      ? Math.round(((baseCompare - basePrice) / baseCompare) * 100)
+      : null,
+    rating: product.averageRating || 0,
+    reviews: product.reviewCount || 0,
+    reviewList: product.reviews ? product.reviews.map(r => ({
+      id: r.id,
+      rating: r.rating,
+      title: r.title,
+      comment: r.comment,
+      createdAt: r.createdAt,
+      user: r.user ? {
+        name: r.user.name,
+        avatar: r.user.avatar
+      } : { name: 'Anonymous' }
+    })) : [],
+    averageRating: product.averageRating || 0,
+    reviewCount: product.reviewCount || 0,
+    qualityLabel: product.averageRating <= 2 ? 'Good' : (product.averageRating < 5 ? 'Best' : 'Excellent'),
+    isNew: product.isFeatured,
+    hasVariants: variants.length > 0,
+    isBestseller: product.reviewCount > 10
+  };
+}
+
 async function getPublicCategories(req, res) {
+
   const prisma = getPrisma();
-  
+
   try {
     const categories = await prisma.category.findMany({
       where: { status: 'active' },
       include: {
-        products: {
-          where: { stock: 'available' },
-          select: { subcategorySlug: true }
-        }
+        subcategories: {
+          orderBy: { name: 'asc' },
+        },
+        _count: { select: { products: { where: { stock: 'available' } } } }
       },
       orderBy: { name: 'asc' }
     });
 
-    // Transform to moms-love shape
-    const transformed = categories.map(cat => {
-      // Group products by subcategorySlug to build subcategories
-      const subcategoryMap = new Map();
-      
-      cat.products.forEach(product => {
-        if (product.subcategorySlug) {
-          const slug = product.subcategorySlug;
-          if (!subcategoryMap.has(slug)) {
-            // Convert slug to title case for name
-            const name = slug
-              .split('-')
-              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-              .join(' ');
-            
-            subcategoryMap.set(slug, {
-              id: slug,
-              name: name,
-              slug: slug,
-              count: 0
-            });
+    // For each subcategory, count products by BOTH subcategoryId (relational)
+    // AND subcategorySlug (legacy field) to handle either storage method.
+    const enrichedCategories = await Promise.all(categories.map(async (cat) => {
+      const enrichedSubs = await Promise.all(cat.subcategories.map(async (sub) => {
+        const count = await prisma.product.count({
+          where: {
+            stock: 'available',
+            OR: [
+              { subcategoryId: sub.id },
+              { subcategorySlug: sub.slug }
+            ]
           }
-          subcategoryMap.get(slug).count++;
-        }
-      });
+        });
+        return { ...sub, count };
+      }));
+      return { ...cat, subcategories: enrichedSubs };
+    }));
 
-      const subcategories = Array.from(subcategoryMap.values());
-
-      return {
-        id: cat.slug || cat.cid,
-        name: cat.name,
-        slug: cat.slug || cat.cid,
-        image: cat.imageUrl || null,
-        description: cat.description || null,
-        subcategories: subcategories
-      };
-    });
+    // Transform to moms-love shape
+    const transformed = enrichedCategories.map(cat => ({
+      id: cat.slug || cat.cid,
+      name: cat.name,
+      slug: cat.slug || cat.cid,
+      image: cat.imageUrl || null,
+      description: cat.description || null,
+      productCount: cat._count.products,
+      subcategories: cat.subcategories.map(sub => ({
+        id: sub.slug,
+        name: sub.name,
+        slug: sub.slug,
+        count: sub.count,
+      }))
+    }));
 
     return ok(res, { message: 'Categories fetched', data: transformed });
   } catch (error) {
     console.error('[PublicCatalog] Error fetching categories:', error);
-    return fail(res, { status: 500, message: 'Failed to fetch categories' });
+    return fail(res, { status: 500, message: `Failed to fetch categories: ${error.message}` });
   }
 }
 
@@ -73,7 +282,7 @@ async function getPublicCategories(req, res) {
 async function getPublicProducts(req, res) {
   const prisma = getPrisma();
   const { page, limit } = parsePagination(req.query);
-  
+
   try {
     const where = {
       stock: 'available'
@@ -82,31 +291,64 @@ async function getPublicProducts(req, res) {
     // Filter by category slug
     if (req.query.categorySlug) {
       const category = await prisma.category.findFirst({
-        where: { slug: req.query.categorySlug, status: 'active' }
+        where: { slug: { equals: req.query.categorySlug, mode: 'insensitive' }, status: 'active' }
       });
       if (category) {
         where.categoryId = category.id;
+        
+        // If no specific subcategory is requested, include all products from this category
+        // including products in any of its subcategories
+        if (!req.query.subcategorySlug) {
+          // This will fetch all products where categoryId matches, regardless of subcategory
+          // No additional filter needed - categoryId alone will get all products in that category
+        }
       } else {
-        return ok(res, { 
-          message: 'Products fetched', 
-          data: [], 
-          meta: { page, limit, total: 0, totalPages: 0 } 
+        // Fallback: check cid just in case
+        const catByCid = await prisma.category.findFirst({
+          where: { cid: req.query.categorySlug, status: 'active' }
         });
+        if (catByCid) {
+          where.categoryId = catByCid.id;
+        } else {
+          return ok(res, {
+            message: 'Products fetched',
+            data: [],
+            meta: { page, limit, total: 0, totalPages: 0 }
+          });
+        }
       }
     }
 
-    // Filter by subcategory slug
+    // Filter by subcategory slug — check both subcategoryId (relational) and subcategorySlug (legacy)
     if (req.query.subcategorySlug) {
-      where.subcategorySlug = req.query.subcategorySlug;
+      const sub = await prisma.subcategory.findFirst({
+        where: { slug: { equals: req.query.subcategorySlug, mode: 'insensitive' } }
+      });
+      if (sub) {
+        // Use AND wrapper so it doesn't conflict with the search OR filter below
+        if (!where.AND) where.AND = [];
+        where.AND.push({
+          OR: [
+            { subcategoryId: sub.id },
+            { subcategorySlug: req.query.subcategorySlug }
+          ]
+        });
+      } else {
+        // No subcategory found with that slug — return empty
+        return ok(res, { message: 'Products fetched', data: [], meta: { page, limit, total: 0, totalPages: 0 } });
+      }
     }
 
-    // Search query
+    // Search query — wrapped in AND to safely compose with subcategory filter
     if (req.query.q) {
-      where.OR = [
-        { name: { contains: req.query.q, mode: 'insensitive' } },
-        { description: { contains: req.query.q, mode: 'insensitive' } },
-        { tags: { has: req.query.q } }
-      ];
+      if (!where.AND) where.AND = [];
+      where.AND.push({
+        OR: [
+          { name: { contains: req.query.q, mode: 'insensitive' } },
+          { description: { contains: req.query.q, mode: 'insensitive' } },
+          { tags: { has: req.query.q } }
+        ]
+      });
     }
 
     // Filter flags - Note: Prisma JSON filtering is complex, we'll filter in memory for now
@@ -122,7 +364,24 @@ async function getPublicProducts(req, res) {
         include: {
           images: { orderBy: { sortOrder: 'asc' } },
           category: true,
-          seller: { select: { id: true, name: true, businessName: true } }
+          subcategory: true,
+          seller: { select: { id: true, name: true, businessName: true } },
+          options: { include: { values: true } },
+          variants: {
+            include: {
+              images: { orderBy: { sortOrder: 'asc' } },
+              specifications: { orderBy: { sortOrder: 'asc' } },
+              optionValues: {
+                include: {
+                  optionValue: {
+                    include: {
+                      option: true
+                    }
+                  }
+                }
+              }
+            }
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
@@ -131,39 +390,7 @@ async function getPublicProducts(req, res) {
     ]);
 
     // Transform to moms-love shape and apply filters
-    let transformed = products.map(product => {
-      const metadata = product.metadata || {};
-      const images = product.images.map(img => img.url);
-      
-      return {
-        id: product.pid,
-        name: product.name,
-        description: product.description || '',
-        price: product.price,
-        salePrice: product.comparePrice,
-        discount: product.comparePrice 
-          ? Math.round(((product.price - product.comparePrice) / product.price) * 100)
-          : null,
-        images: images.length > 0 ? images : ['/images/placeholder.jpg'],
-        category: product.category.slug || product.category.cid,
-        subcategory: product.subcategorySlug || null,
-        brand: metadata.brand || product.seller.businessName || product.seller.name,
-        sizes: metadata.sizes || [],
-        ageGroups: metadata.ageGroups || [],
-        colors: metadata.colors || [],
-        stock: metadata.stock !== undefined ? metadata.stock : (product.stock === 'available' ? 1 : 0),
-        rating: metadata.rating || product.reviewCount > 0 ? 4.5 : 0,
-        reviews: metadata.reviews || product.reviewCount || 0,
-        tags: product.tags || [],
-        isNew: metadata.isNew || false,
-        isBestseller: metadata.isBestseller || false,
-        sku: metadata.sku || product.pid,
-        weight: metadata.weight || product.weight,
-        dimensions: metadata.dimensions || { l: 0, w: 0, h: 0 },
-        materials: metadata.materials || '',
-        care: metadata.care || ''
-      };
-    });
+    let transformed = products.map(transformPublicProduct);
 
     // Apply metadata filters in memory (Prisma JSON filtering is complex)
     if (req.query.isNew === 'true') {
@@ -203,7 +430,29 @@ async function getPublicProductByPid(req, res) {
       include: {
         images: { orderBy: { sortOrder: 'asc' } },
         category: true,
-        seller: { select: { id: true, name: true, businessName: true } }
+        seller: { select: { id: true, name: true, businessName: true } },
+        options: { include: { values: true } },
+        variants: {
+          include: {
+            images: { orderBy: { sortOrder: 'asc' } },
+            specifications: { orderBy: { sortOrder: 'asc' } },
+            optionValues: {
+              include: {
+                optionValue: {
+                  include: {
+                    option: true
+                  }
+                }
+              }
+            }
+          }
+        },
+        reviews: {
+          include: {
+            user: { select: { id: true, name: true, avatar: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
       }
     });
 
@@ -211,37 +460,7 @@ async function getPublicProductByPid(req, res) {
       return fail(res, { status: 404, message: 'Product not found' });
     }
 
-    const metadata = product.metadata || {};
-    const images = product.images.map(img => img.url);
-
-    const transformed = {
-      id: product.pid,
-      name: product.name,
-      description: product.description || '',
-      price: product.price,
-      salePrice: product.comparePrice,
-      discount: product.comparePrice 
-        ? Math.round(((product.price - product.comparePrice) / product.price) * 100)
-        : null,
-      images: images.length > 0 ? images : ['/images/placeholder.jpg'],
-      category: product.category.slug || product.category.cid,
-      subcategory: product.subcategorySlug || null,
-      brand: metadata.brand || product.seller.businessName || product.seller.name,
-      sizes: metadata.sizes || [],
-      ageGroups: metadata.ageGroups || [],
-      colors: metadata.colors || [],
-      stock: metadata.stock !== undefined ? metadata.stock : (product.stock === 'available' ? 1 : 0),
-      rating: metadata.rating || product.reviewCount > 0 ? 4.5 : 0,
-      reviews: metadata.reviews || product.reviewCount || 0,
-      tags: product.tags || [],
-      isNew: metadata.isNew || false,
-      isBestseller: metadata.isBestseller || false,
-      sku: metadata.sku || product.pid,
-      weight: metadata.weight || product.weight,
-      dimensions: metadata.dimensions || { l: 0, w: 0, h: 0 },
-      materials: metadata.materials || '',
-      care: metadata.care || ''
-    };
+    const transformed = transformPublicProduct(product);
 
     return ok(res, { message: 'Product fetched', data: transformed });
   } catch (error) {

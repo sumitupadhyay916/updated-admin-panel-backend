@@ -19,14 +19,14 @@ router.post(
     Joi.object({
       body: Joi.object({
         email: Joi.string().email().required(),
-        password: Joi.string().min(6).required(),
+        password: Joi.string().min(6).optional(),
         name: Joi.string().min(1).required(),
         phone: Joi.string().optional().allow('', null),
         businessName: Joi.string().min(2).required(),
-        businessAddress: Joi.string().min(2).optional().allow('', null),
+        businessAddress: Joi.string().optional().allow('', null),
         gstNumber: Joi.string().optional().allow('', null),
         commissionRate: Joi.number().min(0).max(50).optional(),
-        adminEmail: Joi.string().email().required(),
+        adminEmail: Joi.alternatives().try(Joi.string().email(), Joi.string().allow('', null)).optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object().unknown(true),
@@ -61,10 +61,10 @@ router.delete('/:id', requireAuth, requireRole(['super_admin', 'admin']), asyncH
 router.post('/:id/toggle-status', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(sellersController.toggleSellerStatus));
 
 router.get('/:id/products', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(sellersController.sellerProducts));
-router.get('/:id/orders', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerOrders));
-router.get('/:id/consumers', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerConsumers));
-router.get('/:id/payouts', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerPayouts));
-router.get('/:id/stats', requireAuth, requireRole(['super_admin', 'admin', 'seller']), asyncHandler(sellersController.sellerStats));
+router.get('/:id/orders', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerOrders));
+router.get('/:id/consumers', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerConsumers));
+router.get('/:id/payouts', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerPayouts));
+router.get('/:id/stats', requireAuth, requireRole(['super_admin', 'admin', 'seller', 'staff']), asyncHandler(sellersController.sellerStats));
 
 module.exports = router;
 

@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "UserRole" AS ENUM ('super_admin', 'admin', 'seller', 'consumer');
 
 -- CreateEnum

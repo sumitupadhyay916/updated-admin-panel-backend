@@ -13,11 +13,16 @@ const dashboardRoutes = require('./dashboard.routes');
 const supportRoutes = require('./support.routes');
 const publicCatalogRoutes = require('./publicCatalog.routes');
 const consumerRoutes = require('./consumer.routes');
+const abandonedCartsRoutes = require('./abandonedCarts.routes');
+const sellerPoliciesRoutes = require('./sellerPolicies.routes');
+const subcategoriesRoutes = require('./subcategories.routes');
+const staffRoutes = require('./staff.routes');
 
 const router = express.Router();
 
 // Public routes (no auth)
 router.use('/public', publicCatalogRoutes);
+router.use('/subcategories', subcategoriesRoutes);
 
 // Consumer routes (auth required)
 router.use('/consumer', consumerRoutes);
@@ -34,7 +39,8 @@ router.use('/categories', categoriesRoutes);
 router.use('/admin-categories', adminCategoriesRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/support', supportRoutes);
+router.use('/abandoned-carts', abandonedCartsRoutes);
+router.use('/seller-policies', sellerPoliciesRoutes);
+router.use('/staff', staffRoutes);
 
 module.exports = router;
-
-

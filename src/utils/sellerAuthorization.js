@@ -55,22 +55,25 @@ async function buildSellerWhereClause(user, prisma) {
   // Get admin's assigned categories
   const adminCategoryIds = await getAdminCategoryIds(user.id, prisma);
 
-  // If admin has no assigned categories, return empty result
+  // Visibility criteria for admins:
+  // 1. Seller is assigned to this admin (adminId matches)
+  // 2. OR Seller was created by this admin (createdById matches)
+  const baseAdminVisibility = {
+    OR: [
+      { adminId: user.id },
+      { createdById: user.id }
+    ]
+  };
+
+  // If admin has no assigned categories, they can see all their assigned/created sellers
   if (adminCategoryIds.length === 0) {
-    // Return a where clause that will match no sellers
-    where.id = 'impossible-id-that-will-never-match';
+    where.AND = [baseAdminVisibility];
     return where;
   }
 
-  // Admin filtering: seller must be assigned to this admin (adminId matches)
-  // AND either has products in admin's categories OR has no products yet
   where.AND = [
+    baseAdminVisibility,
     {
-      // Condition 1: Seller is assigned to this admin (adminId foreign key)
-      adminId: user.id
-    },
-    {
-      // Condition 2: Either has products in admin's categories OR has no products yet
       OR: [
         {
           // Has at least one product in admin's assigned categories
@@ -103,43 +106,39 @@ async function buildSellerWhereClause(user, prisma) {
 async function canAdminAccessSeller(adminId, sellerId, prisma) {
   // Get admin's assigned categories
   const adminCategoryIds = await getAdminCategoryIds(adminId, prisma);
-
-  // If admin has no assigned categories, they can't access any seller
-  if (adminCategoryIds.length === 0) {
-    return false;
-  }
-
-  // Fetch the seller with necessary relations
-  const seller = await prisma.user.findFirst({
-    where: {
-      id: sellerId,
-      role: 'seller',
-      AND: [
+  const baseAdminVisibility = {
+    OR: [
+      { adminId: adminId },
+      { createdById: adminId }
+    ]
+  };
+  const where = {
+    id: sellerId,
+    role: 'seller',
+    AND: [baseAdminVisibility]
+  };
+  if (adminCategoryIds.length > 0) {
+    where.AND.push({
+      OR: [
         {
-          // Condition 1: Seller is assigned to this admin (adminId foreign key)
-          adminId: adminId
+          // Has at least one product in admin's categories
+          products: {
+            some: {
+              categoryId: { in: adminCategoryIds }
+            }
+          }
         },
         {
-          // Condition 2: Either has products in admin's categories OR has no products yet
-          OR: [
-            {
-              // Has at least one product in admin's categories
-              products: {
-                some: {
-                  categoryId: { in: adminCategoryIds }
-                }
-              }
-            },
-            {
-              // Has no products yet (newly created seller)
-              products: {
-                none: {}
-              }
-            }
-          ]
+          // Has no products yet (newly created seller)
+          products: {
+            none: {}
+          }
         }
       ]
-    },
+    });
+  }
+  const seller = await prisma.user.findFirst({
+    where,
     include: {
       createdBy: {
         select: { role: true }

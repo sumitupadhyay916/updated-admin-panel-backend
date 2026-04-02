@@ -4,9 +4,19 @@ const { signToken } = require('../utils/jwt');
 
 async function login({ email, password, role }) {
   const prisma = getPrisma();
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+  });
   if (!user) return null;
-  if (role && user.role !== role) return null;
+  if (role) {
+    if (role === 'seller' && user.role === 'staff') {
+      // Allow staff to login via the seller portal
+    } else if (user.role !== role) {
+      return null;
+    }
+  }
+  // Guard: passwordHash may be null if user was created without a password (e.g. activation flow)
+  if (!user.passwordHash) return null;
   const ok = await comparePassword(password, user.passwordHash);
   if (!ok) return null;
   if (user.status !== 'active') return { user, token: null, inactive: true };
@@ -46,6 +56,10 @@ async function changePassword({ userId, currentPassword, newPassword }) {
   return { ok: true };
 }
 
-module.exports = { login, register, changePassword };
+async function generateToken(user) {
+  return signToken({ sub: user.id, role: user.role });
+}
+
+module.exports = { login, register, changePassword, generateToken };
 
 

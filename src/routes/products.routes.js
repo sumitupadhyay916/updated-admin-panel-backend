@@ -1,14 +1,20 @@
 const express = require('express');
 const Joi = require('joi');
+const multer = require('multer');
 
 const { requireAuth, requireRole } = require('../middlewares/auth');
 const { validate } = require('../middlewares/validate');
 const { asyncHandler } = require('../utils/asyncHandler');
 const productsController = require('../controllers/productsController');
+const { uploadImage } = require('../controllers/uploadController');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+router.post('/upload-image', requireAuth, upload.single('image'), asyncHandler(uploadImage));
 
 router.get('/', requireAuth, asyncHandler(productsController.listProducts));
+
 
 router.get('/low-stock', requireAuth, asyncHandler(productsController.lowStock));
 router.get('/pending', requireAuth, requireRole(['super_admin', 'admin']), asyncHandler(productsController.pending));
@@ -23,7 +29,8 @@ router.post(
       body: Joi.object({
         name: Joi.string().required(),
         categoryId: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
-        description: Joi.string().optional(),
+        subcategoryId: Joi.alternatives().try(Joi.number(), Joi.string()).allow(null).optional(),
+        description: Joi.string().allow('').optional(),
         deity: Joi.string().optional(),
         material: Joi.string().optional(),
         height: Joi.number().optional(),
@@ -33,14 +40,45 @@ router.post(
         religionCategory: Joi.string().optional(),
         packagingType: Joi.string().optional(),
         fragile: Joi.boolean().optional(),
-        price: Joi.number().required(),
-        comparePrice: Joi.number().optional(),
+        price: Joi.number().optional(),
+        comparePrice: Joi.number().allow(null).optional(),
         stock: Joi.string().valid('available', 'unavailable').optional(),
         stockQuantity: Joi.number().integer().optional(),
         lowStockThreshold: Joi.number().integer().optional(),
         images: Joi.array().items(Joi.string()).optional(),
         tags: Joi.array().items(Joi.string()).optional(),
         sellerId: Joi.string().optional(),
+        options: Joi.array().items(Joi.object()).optional(),
+        hasVariants: Joi.boolean().optional(),
+        variants: Joi.array().items(Joi.object({
+          color: Joi.string().allow('', null).optional(),
+          colorHex: Joi.string().allow('', null).optional(),
+          attributes: Joi.object().unknown(true).optional(),
+          price: Joi.number().required(),
+          mrp: Joi.number().allow(null).optional(),
+          stockQuantity: Joi.number().integer().optional(),
+          specifications: Joi.array().items(Joi.object({
+            label: Joi.string().required(),
+            value: Joi.string().required(),
+            sortOrder: Joi.number().integer().optional(),
+          })).optional(),
+          images: Joi.array().items(Joi.string()).optional(),
+          sku: Joi.string().allow('', null).optional(),
+        }).unknown(true)).optional(),
+        brand: Joi.string().allow('').optional(),
+        care: Joi.string().allow('').optional(),
+        materials: Joi.string().allow('').optional(),
+        ageGroups: Joi.array().items(Joi.string()).optional(),
+        isNew: Joi.boolean().optional(),
+        isBestseller: Joi.boolean().optional(),
+        dimensions: Joi.object({
+          h: Joi.number().optional(),
+          l: Joi.number().optional(),
+          w: Joi.number().optional(),
+        }).optional(),
+        additionalInfo: Joi.array().items(Joi.object()).optional(),
+        variantAdditionalInfo: Joi.object().optional(),
+        additionalInfoByColor: Joi.object().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object().unknown(true),
@@ -57,7 +95,8 @@ router.put(
       body: Joi.object({
         name: Joi.string().optional(),
         categoryId: Joi.alternatives().try(Joi.number(), Joi.string()).optional(),
-        description: Joi.string().optional(),
+        subcategoryId: Joi.alternatives().try(Joi.number(), Joi.string()).allow(null).optional(),
+        description: Joi.string().allow('').optional(),
         deity: Joi.string().optional(),
         material: Joi.string().optional(),
         height: Joi.number().optional(),
@@ -68,14 +107,47 @@ router.put(
         packagingType: Joi.string().optional(),
         fragile: Joi.boolean().optional(),
         price: Joi.number().optional(),
-        comparePrice: Joi.number().optional(),
+        comparePrice: Joi.number().allow(null).optional(),
+        stock: Joi.string().valid('available', 'unavailable').optional(),
         stockQuantity: Joi.number().integer().optional(),
         lowStockThreshold: Joi.number().integer().optional(),
         images: Joi.array().items(Joi.string()).optional(),
         tags: Joi.array().items(Joi.string()).optional(),
+        stock: Joi.string().valid('available', 'unavailable').optional(),
         status: Joi.string().optional(),
         isFeatured: Joi.boolean().optional(),
         sellerId: Joi.string().optional(),
+        options: Joi.array().items(Joi.object()).optional(),
+        hasVariants: Joi.boolean().optional(),
+        variants: Joi.array().items(Joi.object({
+          color: Joi.string().allow('', null).optional(),
+          colorHex: Joi.string().allow('', null).optional(),
+          attributes: Joi.object().unknown(true).optional(),
+          price: Joi.number().optional(),
+          mrp: Joi.number().allow(null).optional(),
+          stockQuantity: Joi.number().integer().optional(),
+          specifications: Joi.array().items(Joi.object({
+            label: Joi.string().required(),
+            value: Joi.string().required(),
+            sortOrder: Joi.number().integer().optional(),
+          })).optional(),
+          images: Joi.array().items(Joi.string()).optional(),
+          sku: Joi.string().allow('', null).optional(),
+        }).unknown(true)).optional(),
+        brand: Joi.string().allow('').optional(),
+        care: Joi.string().allow('').optional(),
+        materials: Joi.string().allow('').optional(),
+        ageGroups: Joi.array().items(Joi.string()).optional(),
+        isNew: Joi.boolean().optional(),
+        isBestseller: Joi.boolean().optional(),
+        dimensions: Joi.object({
+          h: Joi.number().optional(),
+          l: Joi.number().optional(),
+          w: Joi.number().optional(),
+        }).optional(),
+        additionalInfo: Joi.array().items(Joi.object()).optional(),
+        variantAdditionalInfo: Joi.object().optional(),
+        additionalInfoByColor: Joi.object().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object({ id: Joi.string().required() }).required(),
@@ -121,6 +193,10 @@ router.post(
 
 router.get('/:id/inventory', requireAuth, asyncHandler(productsController.inventory));
 
+// Inventory management endpoints
+router.get('/inventory/stats', requireAuth, asyncHandler(productsController.getInventoryStats));
+router.get('/inventory/cart-details', requireAuth, asyncHandler(productsController.getCartDetails));
+router.get('/:id/inventory-details', requireAuth, asyncHandler(productsController.getProductInventoryDetails));
+router.post('/:id/adjust-stock', requireAuth, asyncHandler(productsController.updateProductStock));
+
 module.exports = router;
-
-

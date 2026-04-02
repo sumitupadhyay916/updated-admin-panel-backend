@@ -15,12 +15,14 @@ router.get('/:id', requireAuth, asyncHandler(categoriesController.getCategory));
 router.post(
   '/',
   requireAuth,
-  requireRole(['super_admin', 'admin']),
+  requireRole(['super_admin', 'admin', 'seller', 'staff']),
   validate(
     Joi.object({
       body: Joi.object({
         name: Joi.string().required(),
         status: Joi.string().valid('active', 'inactive').optional(),
+        imageUrl: Joi.string().allow('', null).optional(),
+        description: Joi.string().allow('', null).optional(),
         noOfProducts: Joi.number().integer().min(0).optional(),
       }).required(),
       query: Joi.object().unknown(true),
@@ -39,6 +41,8 @@ router.put(
       body: Joi.object({
         name: Joi.string().optional(),
         status: Joi.string().valid('active', 'inactive').optional(),
+        imageUrl: Joi.string().allow('', null).optional(),
+        description: Joi.string().allow('', null).optional(),
         noOfProducts: Joi.number().integer().min(0).optional(),
       }).required(),
       query: Joi.object().unknown(true),

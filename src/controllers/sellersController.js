@@ -8,7 +8,8 @@ const { serializeOrder } = require('../serializers/orderSerializer');
 const { serializePayout } = require('../serializers/payoutSerializer');
 const { buildSellerWhereClause, canAdminAccessSeller } = require('../utils/sellerAuthorization');
 const { logAuthorizationFailure } = require('../utils/logger');
-
+const crypto = require('crypto');
+const { sendActivationEmail } = require('../services/emailService');
 async function listSellers(req, res) {
   const prisma = getPrisma();
   const { page, limit, search } = parsePagination(req.query);
@@ -17,7 +18,7 @@ async function listSellers(req, res) {
   try {
     // Build authorization-based where clause
     const authWhere = await buildSellerWhereClause(req.user, prisma);
-    
+
     // Merge with additional filters
     const where = { ...authWhere };
     if (status) where.status = status;
@@ -30,7 +31,7 @@ async function listSellers(req, res) {
           { businessName: { contains: search, mode: 'insensitive' } },
         ]
       };
-      
+
       if (where.AND) {
         where.AND.push(searchConditions);
       } else {
@@ -43,6 +44,9 @@ async function listSellers(req, res) {
       prisma.user.findMany({
         where,
         include: {
+          _count: {
+            select: { products: true }
+          },
           admin: {
             select: {
               id: true,
@@ -65,9 +69,45 @@ async function listSellers(req, res) {
       }),
     ]);
 
+    // Dynamically calculate earnings and order counts for the current set of sellers
+    const sellerIds = rows.map(r => r.id);
+    const orderItems = await prisma.orderItem.findMany({
+      where: {
+        sellerId: { in: sellerIds },
+        order: { orderStatus: { not: 'cancelled' } }
+      },
+      select: {
+        sellerId: true,
+        orderId: true,
+        totalPrice: true
+      }
+    });
+
+    const statsMap = new Map();
+    orderItems.forEach(item => {
+      if (!statsMap.has(item.sellerId)) {
+        statsMap.set(item.sellerId, { revenue: 0, orderIds: new Set() });
+      }
+      const s = statsMap.get(item.sellerId);
+      s.revenue += item.totalPrice;
+      s.orderIds.add(item.orderId);
+    });
+
+    const serializedRows = rows.map(row => {
+      const seller = serializeSellerUser(row);
+      const stats = statsMap.get(row.id) || { revenue: 0, orderIds: new Set() };
+      
+      // Use Gross Revenue to match what the seller sees on their dashboard
+      seller.totalEarnings = Number(row.totalEarnings || stats.revenue || 0);
+      seller.productCount = row._count.products;
+      seller.orderCount = stats.orderIds.size;
+      
+      return seller;
+    });
+
     return ok(res, {
       message: 'Sellers fetched',
-      data: rows.map(serializeSellerUser),
+      data: serializedRows,
       meta: buildMeta({ page, limit, total }),
     });
   } catch (error) {
@@ -80,9 +120,9 @@ async function listSellers(req, res) {
 
 async function getSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const seller = await prisma.user.findFirst({ 
+  const seller = await prisma.user.findFirst({
     where: { id: req.params.id, role: 'seller' },
     include: {
       admin: {
@@ -102,7 +142,7 @@ async function getSeller(req, res) {
       }
     }
   });
-  
+
   if (!seller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
@@ -115,7 +155,7 @@ async function getSeller(req, res) {
   // Admin must have authorization
   if (req.user.role === 'admin') {
     const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
+
     if (!hasAccess) {
       logAuthorizationFailure({
         userId: req.user.id,
@@ -124,12 +164,12 @@ async function getSeller(req, res) {
         sellerId: req.params.id,
         reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to access this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      return fail(res, {
+        status: 403,
+        message: 'You do not have permission to access this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
       });
     }
-    
+
     return ok(res, { message: 'Seller fetched', data: serializeSellerUser(seller) });
   }
 
@@ -141,9 +181,9 @@ async function getSeller(req, res) {
     sellerId: req.params.id,
     reason: 'Insufficient permissions - only admins and super_admins can access seller data'
   });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to access seller data' 
+  return fail(res, {
+    status: 403,
+    message: 'Insufficient permissions to access seller data'
   });
 }
 
@@ -153,18 +193,24 @@ async function createSeller(req, res) {
 
   try {
     const seller = await prisma.$transaction(async (tx) => {
-      // Verify Admin exists by email
-      const admin = await tx.user.findFirst({
-        where: {
-          email: adminEmail,
-          role: { in: ['admin', 'super_admin'] },
-        },
-      });
+      let adminId = null;
 
-      if (!admin) {
-        const err = new Error('Admin with the provided email does not exist');
-        err.status = 400;
-        throw err;
+      // If adminEmail is provided, verify Admin exists
+      if (adminEmail) {
+        const admin = await tx.user.findFirst({
+          where: {
+            email: adminEmail,
+            role: { in: ['admin', 'super_admin'] },
+          },
+        });
+
+        if (!admin) {
+          const err = new Error('Admin with the provided email does not exist');
+          err.status = 400;
+          throw err;
+        }
+
+        adminId = admin.id;
       }
 
       // Check for duplicate seller email
@@ -178,8 +224,14 @@ async function createSeller(req, res) {
         throw err;
       }
 
-      // Create seller with adminId
-      const passwordHash = await hashPassword(password);
+      // Create seller with optional adminId
+      // Generate a random temporary password (it won't be used once activated)
+      const tempPassword = crypto.randomBytes(8).toString('hex');
+      const passwordHash = await hashPassword(tempPassword);
+      
+      const activationToken = crypto.randomBytes(32).toString('hex');
+      const activationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
       const created = await tx.user.create({
         data: {
           email,
@@ -187,7 +239,7 @@ async function createSeller(req, res) {
           name,
           phone: phone || null,
           role: 'seller',
-          status: 'active',
+          status: 'inactive', // New sellers are inactive until they set password
           businessName: businessName || null,
           businessAddress: businessAddress || (businessName ? `${businessName} Address` : null),
           gstNumber: gstNumber || null,
@@ -196,12 +248,20 @@ async function createSeller(req, res) {
           availableBalance: 0,
           pendingBalance: 0,
           createdById: req.user?.id || null,
-          adminId: admin.id,
+          adminId: adminId, // Can be null now
+          activationToken,
+          activationTokenExpires,
         },
       });
 
       return created;
     });
+
+    try {
+      await sendActivationEmail(seller.email, seller.activationToken, seller.name, 'seller');
+    } catch (e) {
+      console.error('[createSeller] Activation email failed:', e.message);
+    }
 
     return ok(res, { message: 'Seller created', data: serializeSellerUser(seller) });
   } catch (error) {
@@ -218,12 +278,12 @@ async function createSeller(req, res) {
 
 async function updateSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const existingSeller = await prisma.user.findFirst({ 
-    where: { id: req.params.id, role: 'seller' } 
+  const existingSeller = await prisma.user.findFirst({
+    where: { id: req.params.id, role: 'seller' }
   });
-  
+
   if (!existingSeller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
@@ -248,7 +308,7 @@ async function updateSeller(req, res) {
   // Admin must have authorization
   if (req.user.role === 'admin') {
     const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
+
     if (!hasAccess) {
       logAuthorizationFailure({
         userId: req.user.id,
@@ -257,12 +317,12 @@ async function updateSeller(req, res) {
         sellerId: req.params.id,
         reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to update this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      return fail(res, {
+        status: 403,
+        message: 'You do not have permission to update this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
       });
     }
-    
+
     const seller = await prisma.user.update({
       where: { id: req.params.id },
       data: {
@@ -286,64 +346,144 @@ async function updateSeller(req, res) {
     sellerId: req.params.id,
     reason: 'Insufficient permissions - only admins and super_admins can update seller data'
   });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to update seller data' 
+  return fail(res, {
+    status: 403,
+    message: 'Insufficient permissions to update seller data'
   });
 }
 
 async function deleteSeller(req, res) {
   const prisma = getPrisma();
-  
+
   // Check if seller exists first
-  const existingSeller = await prisma.user.findFirst({ 
-    where: { id: req.params.id, role: 'seller' } 
+  const existingSeller = await prisma.user.findFirst({
+    where: { id: req.params.id, role: 'seller' }
   });
-  
+
   if (!existingSeller) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
 
-  // Super admin can delete any seller
-  if (req.user.role === 'super_admin') {
-    await prisma.user.delete({ where: { id: req.params.id } });
-    return ok(res, { message: 'Seller deleted', data: null });
-  }
+  // Helper transaction to delete all associated data perfectly
+  const executeCompleteDeletion = async (userId) => {
+    await prisma.$transaction(async (tx) => {
+      // Reassign support pages updated by this user
+      await tx.supportPage.updateMany({
+        where: { updatedById: userId },
+        data: { updatedById: req.user.id }
+      });
 
-  // Admin must have authorization
-  if (req.user.role === 'admin') {
-    const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-    
-    if (!hasAccess) {
-      logAuthorizationFailure({
-        userId: req.user.id,
-        role: req.user.role,
-        operation: 'delete',
-        sellerId: req.params.id,
-        reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
+      // Clear basic relations and junction tables
+      await tx.adminCategory.deleteMany({ where: { adminId: userId } });
+      await tx.sellerCategory.deleteMany({ where: { OR: [{ adminId: userId }, { sellerId: userId }] } });
+      await tx.payout.deleteMany({ where: { sellerId: userId } });
+      await tx.coupon.deleteMany({ where: { createdById: userId } });
+      await tx.queryResponse.deleteMany({ where: { respondedById: userId } });
+      await tx.orderTimeline.deleteMany({ where: { createdById: userId } });
+      await tx.inventoryMovement.deleteMany({ where: { createdById: userId } });
+      await tx.abandonedCart.deleteMany({ where: { sellerId: userId } });
+      
+      // Handle Products and dependencies
+      const sellerProducts = await tx.product.findMany({ 
+        where: { sellerId: userId },
+        select: { id: true }
       });
-      return fail(res, { 
-        status: 403, 
-        message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.' 
+      let productIds = sellerProducts.map(p => p.id);
+
+      // Categories created by this user
+      const userCategories = await tx.category.findMany({
+        where: { createdById: userId },
+        select: { id: true }
       });
+      const categoryIds = userCategories.map(c => c.id);
+
+      if (categoryIds.length > 0) {
+        const categoryProducts = await tx.product.findMany({
+          where: { categoryId: { in: categoryIds } },
+          select: { id: true }
+        });
+        const catProductIds = categoryProducts.map(p => p.id);
+        productIds = [...new Set([...productIds, ...catProductIds])];
+      }
+
+      // Clear Product dependencies (Restrict constraints)
+      if (productIds.length > 0) {
+        await tx.orderItem.deleteMany({ where: { productId: { in: productIds } } });
+        await tx.inventoryMovement.deleteMany({ where: { productId: { in: productIds } } });
+        await tx.product.deleteMany({ where: { id: { in: productIds } } });
+      }
+
+      // Delete the Categories safely
+      if (categoryIds.length > 0) {
+        await tx.subcategory.deleteMany({ where: { categoryId: { in: categoryIds } } });
+        await tx.category.deleteMany({ where: { id: { in: categoryIds } } });
+      }
+
+      // Handle orders made by seller as a customer
+      const customerOrders = await tx.order.findMany({
+        where: { customerId: userId },
+        select: { id: true }
+      });
+      const orderIds = customerOrders.map(o => o.id);
+      if (orderIds.length > 0) {
+        await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.orderTimeline.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+
+      // Delete the User
+      await tx.user.delete({ where: { id: userId } });
+    });
+  };
+
+  try {
+    // Super admin can delete any seller
+    if (req.user.role === 'super_admin') {
+      await executeCompleteDeletion(req.params.id);
+      return ok(res, { message: 'Seller and all associated data permanently deleted.', data: null });
     }
-    
-    await prisma.user.delete({ where: { id: req.params.id } });
-    return ok(res, { message: 'Seller deleted', data: null });
-  }
 
-  // Other roles cannot delete sellers
-  logAuthorizationFailure({
-    userId: req.user.id,
-    role: req.user.role,
-    operation: 'delete',
-    sellerId: req.params.id,
-    reason: 'Insufficient permissions - only admins and super_admins can delete seller data'
-  });
-  return fail(res, { 
-    status: 403, 
-    message: 'Insufficient permissions to delete seller data' 
-  });
+    // Admin must have authorization
+    if (req.user.role === 'admin') {
+      const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
+
+      if (!hasAccess) {
+        logAuthorizationFailure({
+          userId: req.user.id,
+          role: req.user.role,
+          operation: 'delete',
+          sellerId: req.params.id,
+          reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
+        });
+        return fail(res, {
+          status: 403,
+          message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
+        });
+      }
+
+      await executeCompleteDeletion(req.params.id);
+      return ok(res, { message: 'Seller and all associated data permanently deleted.', data: null });
+    }
+
+    // Other roles cannot delete sellers
+    logAuthorizationFailure({
+      userId: req.user.id,
+      role: req.user.role,
+      operation: 'delete',
+      sellerId: req.params.id,
+      reason: 'Insufficient permissions - only admins and super_admins can delete seller data'
+    });
+    return fail(res, {
+      status: 403,
+      message: 'Insufficient permissions to delete seller data'
+    });
+  } catch (error) {
+    console.error('Error completely deleting seller:', error);
+    return fail(res, { 
+      status: 500, 
+      message: 'Failed to fully delete seller and their data. Please try again or contact support.' 
+    });
+  }
 }
 
 async function toggleSellerStatus(req, res) {
@@ -363,7 +503,31 @@ async function sellerProducts(req, res) {
     prisma.product.count({ where }),
     prisma.product.findMany({
       where,
-      include: { images: true, seller: true },
+      include: {
+        images: true,
+        seller: true,
+        category: true,
+        subcategory: true,
+        options: {
+          include: {
+            values: true
+          }
+        },
+        variants: {
+          include: {
+            images: true,
+            optionValues: {
+              include: {
+                optionValue: {
+                  include: {
+                    option: true
+                  }
+                }
+              }
+            }
+          }
+        },
+      },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -379,7 +543,7 @@ async function sellerOrders(req, res) {
   const sellerId = req.params.id;
 
   // Authorization: seller can only access their own orders
-  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+  if (['seller', 'staff'].includes(req.user.role) && req.user.sellerId !== sellerId) {
     return fail(res, {
       status: 403,
       message: 'You are not allowed to view orders for another seller',
@@ -420,7 +584,7 @@ async function sellerConsumers(req, res) {
   const sellerId = req.params.id;
 
   // Authorization: a seller can see only their own consumers
-  if (req.user.role === 'seller' && req.user.id !== sellerId) {
+  if (['seller', 'staff'].includes(req.user.role) && req.user.sellerId !== sellerId) {
     return fail(res, {
       status: 403,
       message: 'You are not allowed to view consumers for another seller',
@@ -528,11 +692,24 @@ async function sellerStats(req, res) {
   const seller = await prisma.user.findFirst({ where: { id: req.params.id, role: 'seller' } });
   if (!seller) return fail(res, { status: 404, message: 'Seller not found' });
 
-  const [products, orders, payouts] = await Promise.all([
+  const [products, orders, payouts, revenueData] = await Promise.all([
     prisma.product.count({ where: { sellerId: seller.id } }),
     prisma.order.count({ where: { items: { some: { sellerId: seller.id } } } }),
     prisma.payout.count({ where: { sellerId: seller.id } }),
+    prisma.orderItem.aggregate({
+      where: {
+        sellerId: seller.id,
+        order: { orderStatus: { not: 'cancelled' } }
+      },
+      _sum: {
+        totalPrice: true
+      }
+    })
   ]);
+
+  const revenue = revenueData._sum.totalPrice || 0;
+  const commissionRate = seller.commissionRate ?? 15;
+  const totalEarnings = revenue * (1 - (commissionRate / 100));
 
   return ok(res, {
     message: 'Seller stats fetched',
@@ -541,10 +718,10 @@ async function sellerStats(req, res) {
       products,
       orders,
       payouts,
-      totalEarnings: seller.totalEarnings ?? 0,
+      totalEarnings,
       availableBalance: seller.availableBalance ?? 0,
       pendingBalance: seller.pendingBalance ?? 0,
-      commissionRate: seller.commissionRate ?? 15,
+      commissionRate,
     },
   });
 }

@@ -20,46 +20,50 @@ async function listCategories(req, res) {
         select: { categoryId: true },
       });
       const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-      console.log(`[Categories] Admin ${user.id} has assigned categories:`, categoryIds);
       if (categoryIds.length > 0) {
         where.id = { in: categoryIds };
       } else {
         // Admin has no categories assigned, return empty
-        console.log(`[Categories] Admin ${user.id} has no categories assigned, returning empty`);
         return ok(res, {
           message: 'Categories fetched',
           data: [],
           meta: buildMeta({ page, limit, total: 0 }),
         });
       }
-    } else if (user && user.role === 'seller') {
-      // If user is seller, filter by categories assigned to their admin
+    } else if (user && ['seller', 'staff'].includes(user.role)) {
+      // If user is seller or staff, show both admin-assigned categories AND seller-created categories
+      const sellerId = user.role === 'seller' ? user.id : user.sellerId;
+      
       const seller = await prisma.user.findUnique({
-        where: { id: user.id },
+        where: { id: sellerId },
         select: { adminId: true },
       });
-      
+
+      const categoryIds = [];
+
+      // Get admin-assigned categories
       if (seller && seller.adminId) {
         const assignedCategoryIds = await prisma.adminCategory.findMany({
           where: { adminId: seller.adminId },
           select: { categoryId: true },
         });
-        const categoryIds = assignedCategoryIds.map((ac) => ac.categoryId);
-        console.log(`[Categories] Seller ${user.id} (admin: ${seller.adminId}) has assigned categories:`, categoryIds);
-        if (categoryIds.length > 0) {
-          where.id = { in: categoryIds };
-        } else {
-          // Seller's admin has no categories assigned, return empty
-          console.log(`[Categories] Seller ${user.id}'s admin has no categories assigned, returning empty`);
-          return ok(res, {
-            message: 'Categories fetched',
-            data: [],
-            meta: buildMeta({ page, limit, total: 0 }),
-          });
-        }
+        categoryIds.push(...assignedCategoryIds.map((ac) => ac.categoryId));
+      }
+
+      // Get seller-created categories
+      const sellerCategories = await prisma.sellerCategory.findMany({
+        where: { sellerId: sellerId },
+        select: { categoryId: true },
+      });
+      categoryIds.push(...sellerCategories.map((sc) => sc.categoryId));
+
+      // Remove duplicates
+      const uniqueCategoryIds = [...new Set(categoryIds)];
+
+      if (uniqueCategoryIds.length > 0) {
+        where.id = { in: uniqueCategoryIds };
       } else {
-        // Seller has no admin assigned, return empty
-        console.log(`[Categories] Seller ${user.id} has no admin assigned, returning empty`);
+        // No categories available, return empty
         return ok(res, {
           message: 'Categories fetched',
           data: [],
@@ -76,6 +80,12 @@ async function listCategories(req, res) {
           _count: {
             select: { products: true },
           },
+          createdBy: {
+            select: {
+              name: true,
+              email: true,
+            },
+          },
         },
         orderBy: { updatedAt: 'desc' },
         skip: (page - 1) * limit,
@@ -87,9 +97,14 @@ async function listCategories(req, res) {
       id: category.id,
       cid: category.cid,
       name: category.name,
+      slug: category.slug,
+      imageUrl: category.imageUrl,
+      description: category.description,
       status: category.status,
-      noOfProducts: category.noOfProducts,
+      // Map real-time count to the field expected by frontend
+      noOfProducts: category._count.products,
       productCount: category._count.products,
+      createdBy: category.createdBy,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,
     }));
@@ -145,8 +160,12 @@ async function getCategory(req, res) {
       id: category.id,
       cid: category.cid,
       name: category.name,
+      slug: category.slug,
+      imageUrl: category.imageUrl,
+      description: category.description,
       status: category.status,
-      noOfProducts: category.noOfProducts,
+      // Use real-time count for both fields
+      noOfProducts: category._count.products,
       productCount: category._count.products,
       createdAt: category.createdAt,
       updatedAt: category.updatedAt,
@@ -183,7 +202,10 @@ async function createCategory(req, res) {
       data: {
         name: name.trim(),
         status: status || 'active',
+        imageUrl: req.body.imageUrl,
+        description: req.body.description,
         noOfProducts: productCount,
+        createdById: req.user.id,
       },
       include: {
         _count: {
@@ -192,12 +214,43 @@ async function createCategory(req, res) {
       },
     });
 
+    // If an admin created this, automatically assign it to them
+    if (req.user.role === 'admin') {
+      await prisma.adminCategory.create({
+        data: {
+          adminId: req.user.id,
+          categoryId: category.id,
+        },
+      });
+    }
+
+    // If a seller created this, automatically assign it to them
+    if (['seller', 'staff'].includes(req.user.role)) {
+      const sellerId = req.user.role === 'seller' ? req.user.id : req.user.sellerId;
+      
+      const seller = await prisma.user.findUnique({
+        where: { id: sellerId },
+        select: { adminId: true },
+      });
+
+      await prisma.sellerCategory.create({
+        data: {
+          adminId: seller?.adminId || req.user.id, // Use seller's admin or self if no admin
+          sellerId: sellerId,
+          categoryId: category.id,
+        },
+      });
+    }
+
     return ok(res, {
       message: 'Category created',
       data: {
         id: category.id,
         cid: category.cid,
         name: category.name,
+        slug: category.slug,
+        imageUrl: category.imageUrl,
+        description: category.description,
         status: category.status,
         noOfProducts: category.noOfProducts,
         productCount: category._count.products,
@@ -254,6 +307,8 @@ async function updateCategory(req, res) {
       }
       updateData.noOfProducts = productCount;
     }
+    if (req.body.imageUrl !== undefined) updateData.imageUrl = req.body.imageUrl;
+    if (req.body.description !== undefined) updateData.description = req.body.description;
 
     const category = await prisma.category.update({
       where: { id: parseInt(req.params.id, 10) },
@@ -271,6 +326,9 @@ async function updateCategory(req, res) {
         id: category.id,
         cid: category.cid,
         name: category.name,
+        slug: category.slug,
+        imageUrl: category.imageUrl,
+        description: category.description,
         status: category.status,
         noOfProducts: category.noOfProducts,
         productCount: category._count.products,
