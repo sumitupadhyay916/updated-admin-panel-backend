@@ -2,21 +2,53 @@ const { fromDbPackagingType, fromDbOccasion } = require('../utils/enums');
 
 function serializeProduct(p) {
   const variants = (p.variants || []).map(v => {
-    // Prefer explicit columns, fallback to relational optionValues
-    const color = v.color || v.optionValues?.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
-    const size = v.size || v.optionValues?.find(ov => /size/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
-    const quality = v.quality || v.optionValues?.find(ov => /quality/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+    // Prefer explicit color column
+    const color = v.color ||
+      v.optionValues?.find(ov => /color/i.test(ov.optionValue?.option?.name))?.optionValue?.value || '';
+
+    // Dynamically build attributes from all non-Color optionValues
+    const attributes = {};
+
+    // First: populate from relational optionValues (source of truth for dynamic fields)
+    if (v.optionValues && Array.isArray(v.optionValues)) {
+      for (const ov of v.optionValues) {
+        const optName = ov.optionValue?.option?.name || '';
+        const optValue = ov.optionValue?.value || '';
+        if (optName && optValue && !/color/i.test(optName)) {
+          attributes[optName] = optValue;
+        }
+      }
+    }
+
+    // Fallback: if no relational data, use legacy columns (size, quality) for old products
+    if (Object.keys(attributes).length === 0) {
+      if (v.size) attributes['Size'] = v.size;
+      if (v.quality) attributes['Quality'] = v.quality;
+    }
 
     return {
       id: v.id,
       price: v.price,
       comparePrice: v.comparePrice,
       stock: v.stock,
-      stockQuantity: v.stock, // Ensure stock matches frontend stockQuantity field alias
+      stockQuantity: v.stockQuantity ?? v.stock,
       color,
-      size,
-      quality,
+      colorHex: v.colorHex || null,
+      // Legacy fields for backward compatibility
+      size: attributes['Size'] || v.size || '',
+      quality: attributes['Quality'] || v.quality || '',
+      // Dynamic attributes map - primary source for the new system
+      attributes,
+      specifications: (v.specifications || []).sort((a, b) => a.sortOrder - b.sortOrder).map(s => ({
+        label: s.label,
+        value: s.value
+      })),
+      additionalInfo: (v.specifications || []).sort((a, b) => a.sortOrder - b.sortOrder).map(s => ({
+        label: s.label,
+        value: s.value
+      })), // Alias for backward compatibility
       sku: v.sku || '',
+      description: v.description || '',
       mrp: v.comparePrice,
       images: (v.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map(i => i.url),
       optionValues: (v.optionValues || []).map(ov => ({

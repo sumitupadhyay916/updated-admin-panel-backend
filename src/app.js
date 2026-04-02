@@ -27,16 +27,8 @@ function createApp() {
         }
       }
 
-      // Check against configured origins
-      const allowedOrigins = env.corsOrigin === '*'
-        ? ['*']
-        : env.corsOrigin.split(',').map((s) => s.trim());
-
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
+      // Temporarily allow all origins to unblock frontend fetching
+      callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

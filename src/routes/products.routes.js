@@ -50,7 +50,21 @@ router.post(
         sellerId: Joi.string().optional(),
         options: Joi.array().items(Joi.object()).optional(),
         hasVariants: Joi.boolean().optional(),
-        variants: Joi.array().items(Joi.object()).optional(),
+        variants: Joi.array().items(Joi.object({
+          color: Joi.string().allow('', null).optional(),
+          colorHex: Joi.string().allow('', null).optional(),
+          attributes: Joi.object().unknown(true).optional(),
+          price: Joi.number().required(),
+          mrp: Joi.number().allow(null).optional(),
+          stockQuantity: Joi.number().integer().optional(),
+          specifications: Joi.array().items(Joi.object({
+            label: Joi.string().required(),
+            value: Joi.string().required(),
+            sortOrder: Joi.number().integer().optional(),
+          })).optional(),
+          images: Joi.array().items(Joi.string()).optional(),
+          sku: Joi.string().allow('', null).optional(),
+        }).unknown(true)).optional(),
         brand: Joi.string().allow('').optional(),
         care: Joi.string().allow('').optional(),
         materials: Joi.string().allow('').optional(),
@@ -62,6 +76,9 @@ router.post(
           l: Joi.number().optional(),
           w: Joi.number().optional(),
         }).optional(),
+        additionalInfo: Joi.array().items(Joi.object()).optional(),
+        variantAdditionalInfo: Joi.object().optional(),
+        additionalInfoByColor: Joi.object().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object().unknown(true),
@@ -102,7 +119,21 @@ router.put(
         sellerId: Joi.string().optional(),
         options: Joi.array().items(Joi.object()).optional(),
         hasVariants: Joi.boolean().optional(),
-        variants: Joi.array().items(Joi.object()).optional(),
+        variants: Joi.array().items(Joi.object({
+          color: Joi.string().allow('', null).optional(),
+          colorHex: Joi.string().allow('', null).optional(),
+          attributes: Joi.object().unknown(true).optional(),
+          price: Joi.number().optional(),
+          mrp: Joi.number().allow(null).optional(),
+          stockQuantity: Joi.number().integer().optional(),
+          specifications: Joi.array().items(Joi.object({
+            label: Joi.string().required(),
+            value: Joi.string().required(),
+            sortOrder: Joi.number().integer().optional(),
+          })).optional(),
+          images: Joi.array().items(Joi.string()).optional(),
+          sku: Joi.string().allow('', null).optional(),
+        }).unknown(true)).optional(),
         brand: Joi.string().allow('').optional(),
         care: Joi.string().allow('').optional(),
         materials: Joi.string().allow('').optional(),
@@ -114,6 +145,9 @@ router.put(
           l: Joi.number().optional(),
           w: Joi.number().optional(),
         }).optional(),
+        additionalInfo: Joi.array().items(Joi.object()).optional(),
+        variantAdditionalInfo: Joi.object().optional(),
+        additionalInfoByColor: Joi.object().optional(),
       }).required(),
       query: Joi.object().unknown(true),
       params: Joi.object({ id: Joi.string().required() }).required(),
@@ -166,5 +200,3 @@ router.get('/:id/inventory-details', requireAuth, asyncHandler(productsControlle
 router.post('/:id/adjust-stock', requireAuth, asyncHandler(productsController.updateProductStock));
 
 module.exports = router;
-
-
