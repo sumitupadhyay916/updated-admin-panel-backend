@@ -143,12 +143,36 @@ function transformPublicProduct(product) {
     ? variants.reduce((sum, v) => sum + (v.stock || 0), 0)
     : (product.stock === 'available' ? (product.stockQuantity || 0) : 0);
 
+  const firstVariant = variants.length > 0 ? variants[0] : null;
+
+  // Use variant images if product images are missing or placeholder
+  // We prefer 'Product Images' over 'Variant Image' (swatch).
+  // Per Admin Panel logic, the swatch is at index 0, and product images follow.
+  let variantFallbackImages = firstVariant && firstVariant.images ? firstVariant.images : [];
+  if (variantFallbackImages.length > 1) {
+    // Skip the first image (the Variant Image / swatch) to show the actual product in the listing
+    variantFallbackImages = variantFallbackImages.slice(1);
+  }
+
+  const displayImages = (images.length > 0 && images[0] !== '/images/placeholder.jpg')
+    ? images
+    : (variantFallbackImages.length > 0 ? variantFallbackImages : (firstVariant && firstVariant.images ? firstVariant.images : ['/images/placeholder.jpg']));
+
+  // Base price and sale price fallback
+  let basePrice = product.price || 0;
+  let baseCompare = product.comparePrice || null;
+
+  if (basePrice === 0 && firstVariant) {
+    basePrice = firstVariant.price || 0;
+    baseCompare = firstVariant.mrp || firstVariant.comparePrice || null;
+  }
+
   return {
     id: product.pid,
     pid: product.pid,
     name: product.name,
     description: product.description || '',
-    images: images.length > 0 ? images : ['/images/placeholder.jpg'],
+    images: displayImages,
     category: product.category.slug || product.category.cid,
     subcategory: product.subcategory?.slug || product.subcategorySlug || null,
     subcategorySlug: product.subcategorySlug || product.subcategory?.slug || null,
@@ -163,14 +187,14 @@ function transformPublicProduct(product) {
     // Moms-love price logic:
     // If discount: price = original(strikethrough), salePrice = current(discounted)
     // If no discount: price = current, salePrice = null
-    price: product.comparePrice && product.comparePrice > product.price
-      ? product.comparePrice
-      : product.price,
-    salePrice: product.comparePrice && product.comparePrice > product.price
-      ? product.price
+    price: baseCompare && baseCompare > basePrice
+      ? baseCompare
+      : basePrice,
+    salePrice: baseCompare && baseCompare > basePrice
+      ? basePrice
       : null,
-    discount: (product.comparePrice && product.comparePrice > product.price)
-      ? Math.round(((product.comparePrice - product.price) / product.comparePrice) * 100)
+    discount: (baseCompare && baseCompare > basePrice)
+      ? Math.round(((baseCompare - basePrice) / baseCompare) * 100)
       : null,
     rating: product.averageRating || 0,
     reviews: product.reviewCount || 0,

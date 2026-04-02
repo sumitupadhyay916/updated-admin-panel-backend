@@ -99,6 +99,28 @@ function serializeProduct(p) {
     }
   }
 
+  const firstVariant = variants.length > 0 ? variants[0] : null;
+
+  // Use variant images if product images are missing
+  let displayImages = (p.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map((i) => i.url);
+  if (displayImages.length === 0 && firstVariant) {
+    let fallbackImages = firstVariant.images || [];
+    if (fallbackImages.length > 1) {
+      // Skip the swatch/variant image at index 0
+      displayImages = fallbackImages.slice(1);
+    } else {
+      displayImages = fallbackImages;
+    }
+  }
+
+  // Price fallback
+  let displayPrice = p.price;
+  let displayCompare = p.comparePrice;
+  if ((!displayPrice || displayPrice === 0) && firstVariant) {
+    displayPrice = firstVariant.price;
+    displayCompare = firstVariant.mrp || firstVariant.comparePrice;
+  }
+
   return {
     id: p.id,
     pid: p.pid,
@@ -113,12 +135,12 @@ function serializeProduct(p) {
     religionCategory: p.religionCategory,
     packagingType: fromDbPackagingType(p.packagingType),
     fragile: p.fragile,
-    price: p.price,
-    comparePrice: p.comparePrice ?? undefined,
+    price: displayPrice,
+    comparePrice: displayCompare ?? undefined,
     stock: p.stock,
     stockQuantity: p.stockQuantity ?? 0,
     lowStockThreshold: p.lowStockThreshold,
-    images: (p.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map((i) => i.url),
+    images: displayImages,
     reviewCount: p.reviewCount,
     averageRating: p.averageRating,
     sellerId: p.sellerId,
