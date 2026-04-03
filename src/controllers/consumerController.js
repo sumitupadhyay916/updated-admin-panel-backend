@@ -311,9 +311,10 @@ async function checkout(req, res) {
     const products = await prisma.product.findMany({
       where: { pid: { in: productPids }, stock: 'available' },
       include: {
-        images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+        images: { orderBy: { sortOrder: 'asc' } },
         category: true,
         seller: { select: { id: true, name: true, businessName: true } },
+        variants: { include: { images: true } }
       },
     });
 
@@ -337,14 +338,7 @@ async function checkout(req, res) {
       let variant = null;
 
       if (variantId) {
-        variant = await prisma.productVariant.findUnique({
-          where: { id: variantId },
-          include: {
-            optionValues: {
-              include: { optionValue: { include: { option: true } } }
-            }
-          }
-        });
+        variant = product.variants.find(v => v.id === variantId);
       }
 
       try {
@@ -361,7 +355,7 @@ async function checkout(req, res) {
       }
 
       // Use variant price if available, otherwise base product price
-      const unitPrice = variant ? (variant.price || product.price) : (product.comparePrice || product.price);
+      const unitPrice = variant ? (variant.price || product.price) : (product.price);
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
 
@@ -369,14 +363,21 @@ async function checkout(req, res) {
       let color = variant?.color || null;
       let size = variant?.size || null;
 
-      // If color/size are null on variant model, try to extract from optionValues
-      if (variant && (!color || !size)) {
-        variant.optionValues.forEach(ov => {
-          const optName = ov.optionValue.option.name.toLowerCase();
-          if (optName.includes('color')) color = ov.optionValue.value;
-          if (optName.includes('size')) size = ov.optionValue.value;
-        });
+      // Track image selection logic
+      let productImage = '';
+      const baseImages = (product.images || []).map(img => img.url);
+      if (baseImages.length > 0 && baseImages[0] !== '/images/placeholder.jpg') {
+        productImage = baseImages[0];
+      } else if (variant) {
+        const vImages = (variant.images || []).map(img => img.url);
+        if (vImages.length > 1) {
+          productImage = vImages[1]; // Skip swatch
+        } else if (vImages.length > 0) {
+          productImage = vImages[0];
+        }
       }
+
+      if (!productImage) productImage = '/images/placeholder.jpg';
 
       // Track for reservation conversion
       reservationItems.push({ productId: product.id, variantId });
@@ -395,7 +396,8 @@ async function checkout(req, res) {
         totalPrice,
         variantId,
         color,
-        size
+        size,
+        productImage
       });
     }
 
@@ -433,7 +435,7 @@ async function checkout(req, res) {
             sg.items.map((item) => ({
               productId: item.product.id,
               productName: item.product.name,
-              productImage: item.product.images[0]?.url || '/images/placeholder.jpg',
+              productImage: item.productImage,
               deity: item.product.deity, material: item.product.material,
               height: item.product.height, weight: item.product.weight,
               packagingType: item.product.packagingType, fragile: item.product.fragile,
@@ -479,7 +481,17 @@ async function getConsumerOrders(req, res) {
     const orders = await prisma.order.findMany({
       where: { customerId: user.id },
       include: {
-        items: { include: { product: { include: { images: { take: 1 } } } } },
+        items: { 
+          include: { 
+            product: { 
+              include: { 
+                images: true,
+                variants: { include: { images: true } }
+              } 
+            },
+            variant: { include: { images: true } }
+          } 
+        },
         shippingAddress: true, billingAddress: true,
       },
       orderBy: { createdAt: 'desc' },
@@ -489,12 +501,47 @@ async function getConsumerOrders(req, res) {
       id: order.id, orderNumber: order.orderNumber, status: order.orderStatus,
       paymentStatus: order.paymentStatus, totalAmount: order.totalAmount,
       discountAmount: order.discountAmount, couponCode: order.couponCode,
-      items: order.items.map((item) => ({
-        id: item.id, productId: item.product.pid, productName: item.productName,
-        productImage: item.productImage, quantity: item.quantity,
-        unitPrice: item.unitPrice, totalPrice: item.totalPrice, sellerName: item.sellerName,
-        color: item.color, size: item.size,
-      })),
+      trackingNumber: order.trackingNumber, carrier: order.carrier,
+      items: order.items.map((item) => {
+        let displayImage = item.productImage;
+
+        // Deep Fallback Logic for legacy orders
+        if (!displayImage || displayImage === '' || displayImage === '/images/placeholder.jpg') {
+          // 1. Try specific variant
+          const vImages = (item.variant?.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+          if (vImages.length > 1) {
+            displayImage = vImages[1];
+          } else if (vImages.length > 0) {
+            displayImage = vImages[0];
+          } else {
+            // 2. Try base product
+            const pImages = (item.product?.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+            if (pImages.length > 0) {
+              displayImage = pImages[0];
+            } else {
+              // 3. Try first variant of product
+              const firstV = (item.product?.variants || [])[0];
+              if (firstV) {
+                const fvImages = (firstV.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+                if (fvImages.length > 1) {
+                  displayImage = fvImages[1];
+                } else if (fvImages.length > 0) {
+                  displayImage = fvImages[0];
+                }
+              }
+            }
+          }
+        }
+
+        if (!displayImage) displayImage = '/images/placeholder.jpg';
+
+        return {
+          id: item.id, productId: item.product.pid, productName: item.productName,
+          productImage: displayImage, quantity: item.quantity,
+          unitPrice: item.unitPrice, totalPrice: item.totalPrice, sellerName: item.sellerName,
+          color: item.color, size: item.size,
+        };
+      }),
       shippingAddress: order.shippingAddress, billingAddress: order.billingAddress,
       createdAt: order.createdAt.toISOString(),
     }));

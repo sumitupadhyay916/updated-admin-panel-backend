@@ -42,6 +42,30 @@ async function sendActivationEmail(to, token, userName, role = 'seller') {
   }
 }
 
+async function sendPasswordResetOtpEmail(to, otp, userName) {
+  const mailOptions = {
+    from: `"Admin Panel" <${process.env.EMAIL_USER}>`,
+    to,
+    subject: 'Password Reset OTP',
+    text: `Hello ${userName},\n\nYour OTP for password reset is: ${otp}\n\nThis OTP will expire in 15 minutes.`,
+    html: `
+      <h2>Hello ${userName},</h2>
+      <p>Your OTP for password reset is: <strong>${otp}</strong></p>
+      <p>This OTP will expire in 15 minutes.</p>
+    `,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`Password reset OTP email sent:`, info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error(`Error sending password reset OTP email:`, error);
+    throw error;
+  }
+}
+
 module.exports = {
   sendActivationEmail,
+  sendPasswordResetOtpEmail,
 };
