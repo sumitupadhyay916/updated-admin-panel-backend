@@ -30,6 +30,8 @@ model User {
   updatedAt                DateTime               @updatedAt
   activationToken          String?
   activationTokenExpires   DateTime?
+  resetPasswordOtp         String?
+  resetPasswordOtpExpires  DateTime?
   customerAbandonedCarts   AbandonedCart[]        @relation("CustomerAbandonedCarts")
   sellerAbandonedCarts     AbandonedCart[]        @relation("SellerAbandonedCarts")
   addresses                Address[]

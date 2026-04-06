@@ -50,7 +50,23 @@ async function listOrders(req, res) {
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      include: { items: true, customer: true, shippingAddress: true, billingAddress: true, seller: true },
+      include: {
+        items: {
+          include: {
+            product: {
+              include: {
+                images: true,
+                variants: { include: { images: true } }
+              }
+            },
+            variant: { include: { images: true } }
+          }
+        },
+        customer: true,
+        shippingAddress: true,
+        billingAddress: true,
+        seller: true
+      },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -79,7 +95,23 @@ async function recentOrders(req, res) {
   const rows = await prisma.order.findMany({
     where,
     take: limit,
-    include: { items: true, customer: true, shippingAddress: true, billingAddress: true, seller: true },
+    include: {
+      items: {
+        include: {
+          product: {
+            include: {
+              images: true,
+              variants: { include: { images: true } }
+            }
+          },
+          variant: { include: { images: true } }
+        }
+      },
+      customer: true,
+      shippingAddress: true,
+      billingAddress: true,
+      seller: true
+    },
     orderBy: { createdAt: 'desc' },
   });
   return ok(res, { message: 'Recent orders fetched', data: rows.map(serializeOrder) });
@@ -89,7 +121,23 @@ async function getOrder(req, res) {
   const prisma = getPrisma();
   const o = await prisma.order.findUnique({
     where: { id: req.params.id },
-    include: { items: true, customer: true, shippingAddress: true, billingAddress: true, seller: true },
+    include: {
+      items: {
+        include: {
+          product: {
+            include: {
+              images: true,
+              variants: { include: { images: true } }
+            }
+          },
+          variant: { include: { images: true } }
+        }
+      },
+      customer: true,
+      shippingAddress: true,
+      billingAddress: true,
+      seller: true
+    },
   });
   if (!o) return fail(res, { status: 404, message: 'Order not found' });
 
@@ -132,7 +180,7 @@ async function createOrder(req, res) {
   const productIds = req.body.items.map((i) => i.productId);
   const products = await prisma.product.findMany({
     where: { id: { in: productIds } },
-    include: { images: true, seller: true },
+    include: { images: true, seller: true, variants: { include: { images: true } } },
   });
   const productsById = new Map(products.map((p) => [p.id, p]));
 
@@ -140,14 +188,33 @@ async function createOrder(req, res) {
   const orderItemsData = req.body.items.map((i) => {
     const p = productsById.get(i.productId);
     if (!p) throw Object.assign(new Error('Invalid productId'), { statusCode: 400 });
-    const unitPrice = p.price;
+
+    const v = i.variantId ? p.variants.find(v => v.id === i.variantId) : null;
+    const unitPrice = v ? v.price : p.price;
     const totalPrice = unitPrice * i.quantity;
     subtotal += totalPrice;
-    const primaryImage = (p.images || []).sort((a, b) => a.sortOrder - b.sortOrder)[0]?.url || '';
+
+    // Image logic: prefer actual product image over swatch
+    let primaryImage = '';
+    const baseImages = (p.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map(img => img.url);
+    if (baseImages.length > 0 && baseImages[0] !== '/images/placeholder.jpg') {
+      primaryImage = baseImages[0];
+    } else if (v) {
+      const vImages = (v.images || []).sort((a, b) => a.sortOrder - b.sortOrder).map(img => img.url);
+      if (vImages.length > 1) {
+        primaryImage = vImages[1]; // Skip swatch
+      } else if (vImages.length > 0) {
+        primaryImage = vImages[0];
+      }
+    }
+
     return {
       productId: p.id,
       productName: p.name,
       productImage: primaryImage,
+      variantId: v ? v.id : null,
+      color: v ? v.color : (i.color || null),
+      size: v ? v.size : (i.size || null),
       deity: p.deity,
       material: p.material,
       height: p.height,

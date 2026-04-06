@@ -1,5 +1,6 @@
 const { ok, fail } = require('../utils/apiResponse');
 const authService = require('../services/authService');
+const emailService = require('../services/emailService');
 const {
   serializeAdminUser,
   serializeSellerUser,
@@ -163,6 +164,89 @@ async function verifyActivationToken(req, res) {
   return ok(res, { message: 'Token is valid', data: user });
 }
 
-module.exports = { login, register, profile, changePassword, activateSeller, verifyActivationToken };
+async function requestPasswordResetOtp(req, res) {
+  const { email } = req.body;
+  if (!email) return fail(res, { status: 400, message: 'Email is required' });
 
+  const prisma = getPrisma();
+  const user = await prisma.user.findUnique({ where: { email } });
+  
+  if (!user) {
+    return fail(res, { status: 404, message: 'User not found' });
+  }
 
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = new Date();
+  expires.setMinutes(expires.getMinutes() + 15);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      resetPasswordOtp: otp,
+      resetPasswordOtpExpires: expires,
+    },
+  });
+
+  await emailService.sendPasswordResetOtpEmail(user.email, otp, user.name);
+
+  return ok(res, { message: 'OTP sent to email successfully' });
+}
+
+async function verifyPasswordResetOtp(req, res) {
+  const { email, otp } = req.body;
+  if (!email || otp === undefined || otp === null || String(otp).trim() === '') {
+    return fail(res, { status: 400, message: 'Email and OTP are required' });
+  }
+
+  const prisma = getPrisma();
+  const user = await prisma.user.findFirst({
+    where: {
+      email,
+      resetPasswordOtp: String(otp).trim(),
+      resetPasswordOtpExpires: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+
+  if (!user) {
+    return fail(res, { status: 400, message: 'Invalid or expired OTP' });
+  }
+
+  return ok(res, { message: 'OTP verified successfully' });
+}
+
+async function resetPassword(req, res) {
+  const { email, otp, newPassword } = req.body;
+  
+  if (!email || !otp || !newPassword) {
+    return fail(res, { status: 400, message: 'Email, OTP, and new password are required' });
+  }
+
+  const prisma = getPrisma();
+  const user = await prisma.user.findFirst({
+    where: {
+      email,
+      resetPasswordOtp: String(otp),
+      resetPasswordOtpExpires: { gt: new Date() },
+    },
+  });
+
+  if (!user) {
+    return fail(res, { status: 400, message: 'Invalid or expired OTP' });
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash,
+      resetPasswordOtp: null,
+      resetPasswordOtpExpires: null,
+    },
+  });
+
+  return ok(res, { message: 'Password reset successfully' });
+}
+
+module.exports = { login, register, profile, changePassword, activateSeller, verifyActivationToken, requestPasswordResetOtp, verifyPasswordResetOtp, resetPassword };

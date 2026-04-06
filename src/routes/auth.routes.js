@@ -105,6 +105,49 @@ router.post(
   asyncHandler(authController.activateSeller),
 );
 
+router.post(
+  '/request-password-reset-otp',
+  validate(
+    Joi.object({
+      body: Joi.object({
+        email: Joi.string().email().required(),
+      }).required(),
+      query: Joi.object().unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.requestPasswordResetOtp),
+);
+
+router.post(
+  '/verify-password-reset-otp',
+  validate(
+    Joi.object({
+      body: Joi.object({
+        email: Joi.string().email().required(),
+        otp: Joi.string().required(),
+      }).required(),
+      query: Joi.object().unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.verifyPasswordResetOtp),
+);
+
+router.post(
+  '/reset-password',
+  validate(
+    Joi.object({
+      body: Joi.object({
+        email: Joi.string().email().required(),
+        otp: Joi.string().required(),
+        newPassword: Joi.string().min(6).required(),
+      }).required(),
+      query: Joi.object().unknown(true),
+      params: Joi.object().unknown(true),
+    }),
+  ),
+  asyncHandler(authController.resetPassword),
+);
+
 module.exports = router;
-
-

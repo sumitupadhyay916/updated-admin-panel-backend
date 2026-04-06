@@ -2,11 +2,46 @@ const { fromDbPackagingType } = require('../utils/enums');
 const { serializeAddress } = require('./addressSerializer');
 
 function serializeOrderItem(i) {
+  let displayImage = i.productImage;
+
+  // Fallback for older orders where productImage might be empty or a placeholder
+  if (!displayImage || displayImage === '' || displayImage === '/images/placeholder.jpg') {
+    // 1. Try the specific variant recorded in the item
+    const vImages = (i.variant?.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+    if (vImages.length > 1) {
+      displayImage = vImages[1]; // Skip swatch
+    } else if (vImages.length > 0) {
+      displayImage = vImages[0];
+    } else {
+      // 2. Try the base product images
+      const pImages = (i.product?.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+      if (pImages.length > 0) {
+        displayImage = pImages[0];
+      } else {
+        // 3. Deep Fallback: Check the product's first available variant
+        const firstV = (i.product?.variants || [])[0];
+        if (firstV) {
+          const fvImages = (firstV.images || []).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(img => img.url);
+          if (fvImages.length > 1) {
+            displayImage = fvImages[1]; // Skip swatch
+          } else if (fvImages.length > 0) {
+            displayImage = fvImages[0];
+          }
+        }
+      }
+    }
+  }
+
+  // Ensure we don't return an empty string if possible
+  if (!displayImage || displayImage === '') {
+    displayImage = '/images/placeholder.jpg';
+  }
+
   return {
     id: i.id,
     productId: i.productId,
     productName: i.productName,
-    productImage: i.productImage,
+    productImage: displayImage,
     deity: i.deity,
     material: i.material,
     height: i.height,
@@ -67,6 +102,6 @@ function serializeTimeline(t) {
   };
 }
 
-module.exports = { serializeOrder, serializeTimeline };
+module.exports = { serializeOrder, serializeTimeline, serializeOrderItem };
 
 
