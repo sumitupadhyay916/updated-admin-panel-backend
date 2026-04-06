@@ -192,6 +192,29 @@ async function requestPasswordResetOtp(req, res) {
   return ok(res, { message: 'OTP sent to email successfully' });
 }
 
+async function verifyPasswordResetOtp(req, res) {
+  const { email, otp } = req.body;
+  if (!email || otp === undefined || otp === null || String(otp).trim() === '') {
+    return fail(res, { status: 400, message: 'Email and OTP are required' });
+  }
+
+  const prisma = getPrisma();
+  const user = await prisma.user.findFirst({
+    where: {
+      email,
+      resetPasswordOtp: String(otp).trim(),
+      resetPasswordOtpExpires: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+
+  if (!user) {
+    return fail(res, { status: 400, message: 'Invalid or expired OTP' });
+  }
+
+  return ok(res, { message: 'OTP verified successfully' });
+}
+
 async function resetPassword(req, res) {
   const { email, otp, newPassword } = req.body;
   
@@ -226,4 +249,4 @@ async function resetPassword(req, res) {
   return ok(res, { message: 'Password reset successfully' });
 }
 
-module.exports = { login, register, profile, changePassword, activateSeller, verifyActivationToken, requestPasswordResetOtp, resetPassword };
+module.exports = { login, register, profile, changePassword, activateSeller, verifyActivationToken, requestPasswordResetOtp, verifyPasswordResetOtp, resetPassword };
