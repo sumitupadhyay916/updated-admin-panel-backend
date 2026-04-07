@@ -182,6 +182,7 @@ function transformPublicProduct(product) {
     colors,
     ageGroups: metadata.ageGroups || [],
     stock: totalStock,
+    stockStatus: product.stock, // 'available' | 'unavailable'
     care: metadata.care || '',
     materials: metadata.materials || '',
     variants,
@@ -286,7 +287,9 @@ async function getPublicProducts(req, res) {
 
   try {
     const where = {
-      stock: 'available'
+      // Do NOT filter by stock here — out-of-stock products are still shown,
+      // just with an "Out of Stock" label and disabled purchase buttons.
+      status: 'active',
     };
 
     // Filter by category slug
