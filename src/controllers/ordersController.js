@@ -292,14 +292,43 @@ async function createOrder(req, res) {
     include: { items: true, customer: true, shippingAddress: true, billingAddress: true },
   });
 
-  // Update inventory (best-effort)
+  // ──── Update inventory ────────────────────────────────────────────────
   await Promise.all(
-    orderItemsData.map((i) =>
-      prisma.product.update({
-        where: { id: i.productId },
-        data: { stockQuantity: { decrement: i.quantity } },
-      }),
-    ),
+    orderItemsData.map(async (i) => {
+      if (i.variantId) {
+        // Decrement variant stock
+        const updatedVariant = await prisma.productVariant.update({
+          where: { id: i.variantId },
+          data: { stockQuantity: { decrement: i.quantity } },
+          select: { id: true, stockQuantity: true, productId: true },
+        });
+        // If this variant is now out of stock, check siblings
+        if (updatedVariant.stockQuantity <= 0) {
+          const siblingsWithStock = await prisma.productVariant.count({
+            where: { productId: updatedVariant.productId, stockQuantity: { gt: 0 }, isActive: true },
+          });
+          if (siblingsWithStock === 0) {
+            await prisma.product.update({
+              where: { id: updatedVariant.productId },
+              data: { stock: 'unavailable' },
+            });
+          }
+        }
+      } else {
+        // Decrement base product stock
+        const updatedProduct = await prisma.product.update({
+          where: { id: i.productId },
+          data: { stockQuantity: { decrement: i.quantity } },
+          select: { id: true, stockQuantity: true },
+        });
+        if (updatedProduct.stockQuantity <= 0) {
+          await prisma.product.update({
+            where: { id: updatedProduct.id },
+            data: { stock: 'unavailable', stockQuantity: 0 },
+          });
+        }
+      }
+    }),
   );
 
   return ok(res, { message: 'Order created', data: serializeOrder(created) });
@@ -334,8 +363,51 @@ async function updateStatus(req, res) {
 
 async function cancel(req, res) {
   const prisma = getPrisma();
-  const existing = await prisma.order.findUnique({ where: { id: req.params.id } });
+  const existing = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: { items: true },
+  });
   if (!existing) return fail(res, { status: 404, message: 'Order not found' });
+
+  // Only restore stock if the order was not already cancelled
+  if (existing.orderStatus !== 'cancelled') {
+    await Promise.all(
+      existing.items.map(async (item) => {
+        try {
+          if (item.variantId) {
+            // Restore variant stock
+            const updatedVariant = await prisma.productVariant.update({
+              where: { id: item.variantId },
+              data: { stockQuantity: { increment: item.quantity } },
+              select: { id: true, stockQuantity: true, productId: true },
+            });
+            // If product was marked unavailable, mark it available now
+            if (updatedVariant.stockQuantity > 0) {
+              await prisma.product.update({
+                where: { id: updatedVariant.productId },
+                data: { stock: 'available' },
+              });
+            }
+          } else {
+            // Restore base product stock
+            const updatedProduct = await prisma.product.update({
+              where: { id: item.productId },
+              data: { stockQuantity: { increment: item.quantity } },
+              select: { id: true, stockQuantity: true },
+            });
+            if (updatedProduct.stockQuantity > 0) {
+              await prisma.product.update({
+                where: { id: updatedProduct.id },
+                data: { stock: 'available' },
+              });
+            }
+          }
+        } catch (restoreErr) {
+          console.error(`[Cancel] Stock restore failed for item (product=${item.productId}, variant=${item.variantId}):`, restoreErr.message);
+        }
+      })
+    );
+  }
 
   const updated = await prisma.order.update({
     where: { id: req.params.id },

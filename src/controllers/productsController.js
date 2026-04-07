@@ -1409,9 +1409,12 @@ async function updateProductStock(req, res) {
       }
 
       // Update the main product's total stock
-      let newStock = product.stock; 
+      let newStock = product.stock;
       if (newTotalQuantity === 0) {
         newStock = 'unavailable';
+      } else if (newTotalQuantity > 0 && product.stock === 'unavailable') {
+        // Re-mark as available when stock is restocked
+        newStock = 'available';
       }
 
       return tx.product.update({

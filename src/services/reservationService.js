@@ -4,17 +4,16 @@
  * Manages inventory reservations to prevent overselling.
  *
  * Flow:
- *  Add to Cart → reserveInventory() → stock temporarily blocked
- *  Checkout     → convertReservation() → reservation finalized (real deduction done by order flow)
+ *  Add to Cart  → reserveInventory()         → reservation created (stock display unchanged)
+ *  Checkout     → [stock deducted in controller] + convertReservation() → reservation marked 'converted'
  *  Expiry       → cleanupExpiredReservations() → runs every minute via cron
  *
- * Stock formula:
- *  Simple product:  available = product.stockQuantity - SUM(active reservations where variantId IS NULL)
- *  Variant product: available = variant.stockQuantity  - SUM(active reservations for that variantId)
+ * Stock formula (used for pre-checkout checks only):
+ *  Simple product:  available = product.stockQuantity
+ *  Variant product: available = variant.stockQuantity
  *
- * Only "active" reservations reduce available stock.
- * "expired" and "converted" reservations do NOT reduce stock.
- * convertReservation does NOT deduct stock — the order flow already does that.
+ * Actual stockQuantity is decremented in consumerController.checkout() and ordersController.createOrder().
+ * On cancellation, stock is restored by ordersController.cancel().
  */
 
 const { getPrisma } = require('../config/prisma');

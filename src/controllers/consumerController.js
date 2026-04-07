@@ -176,7 +176,7 @@ async function syncCart(req, res) {
     const productMap = new Map(products.map((p) => [p.pid, p]));
 
     const bySeller = new Map();
-    
+
     for (const item of cartItems) {
       const prod = productMap.get(item.productId);
       if (!prod) continue;
@@ -184,7 +184,7 @@ async function syncCart(req, res) {
       const requestedQty = item.quantity || 1;
       // We no longer cap the quantity based on abandoned carts because 
       // the user wants stock counts NOT to decrease when added to cart.
-      
+
       if (!bySeller.has(prod.sellerId)) bySeller.set(prod.sellerId, []);
       bySeller.get(prod.sellerId).push({ item: { ...item, quantity: requestedQty }, prod });
     }
@@ -309,7 +309,7 @@ async function checkout(req, res) {
 
     const productPids = items.map((item) => item.productId);
     const products = await prisma.product.findMany({
-      where: { pid: { in: productPids }, stock: 'available' },
+      where: { pid: { in: productPids } },
       include: {
         images: { orderBy: { sortOrder: 'asc' } },
         category: true,
@@ -333,12 +333,26 @@ async function checkout(req, res) {
       const product = productMap.get(item.productId);
       if (!product) return fail(res, { status: 400, message: `Product ${item.productId} not found` });
 
+      // ── Reject if product is marked out of stock ──
+      if (product.stock === 'unavailable') {
+        return fail(res, { status: 409, message: `"${product.name}" is currently out of stock` });
+      }
+
       // ── Stock validation: check real available stock (base - active reservations) ──
       const variantId = item.variantId || null;
       let variant = null;
 
       if (variantId) {
         variant = product.variants.find(v => v.id === variantId);
+        // Check variant-level stock
+        if (variant && variant.stockQuantity <= 0) {
+          return fail(res, { status: 409, message: `"${product.name}" (${variant.color || ''} ${variant.size || ''}`.trim() + ') is out of stock' });
+        }
+      } else {
+        // Check product-level stock
+        if ((product.stockQuantity || 0) <= 0) {
+          return fail(res, { status: 409, message: `"${product.name}" is out of stock` });
+        }
       }
 
       try {
@@ -347,7 +361,7 @@ async function checkout(req, res) {
           variantId,
           excludeUserId: user.id, // exclude this user's own reservations from the check
         });
-        if (available < 0) {
+        if (available < item.quantity) {
           return fail(res, { status: 409, message: `Not enough stock for: ${product.name}` });
         }
       } catch (stockErr) {
@@ -389,10 +403,10 @@ async function checkout(req, res) {
           items: [],
         });
       }
-      itemsBySeller.get(product.sellerId).items.push({ 
-        product, 
-        quantity: item.quantity, 
-        unitPrice, 
+      itemsBySeller.get(product.sellerId).items.push({
+        product,
+        quantity: item.quantity,
+        unitPrice,
         totalPrice,
         variantId,
         color,
@@ -450,7 +464,61 @@ async function checkout(req, res) {
       },
     });
 
-    // ── Convert active reservations → 'converted' (does NOT deduct stock; order flow does that) ──
+    // ── Deduct stock for each ordered item ──────────────────────────────────────
+    // Run stock deductions in parallel (best-effort, non-blocking to order creation)
+    const stockDeductionPromises = Array.from(itemsBySeller.values()).flatMap((sg) =>
+      sg.items.map(async (item) => {
+        try {
+          if (item.variantId) {
+            // ── Variant product: decrement variant.stockQuantity ──
+            const updatedVariant = await prisma.productVariant.update({
+              where: { id: item.variantId },
+              data: { stockQuantity: { decrement: item.quantity } },
+              select: { id: true, stockQuantity: true, productId: true },
+            });
+
+            // If variant is now out of stock, check if ALL variants are out of stock
+            // and mark the parent product accordingly
+            if (updatedVariant.stockQuantity <= 0) {
+              const siblingsWithStock = await prisma.productVariant.count({
+                where: {
+                  productId: updatedVariant.productId,
+                  stockQuantity: { gt: 0 },
+                  isActive: true,
+                },
+              });
+              if (siblingsWithStock === 0) {
+                await prisma.product.update({
+                  where: { id: updatedVariant.productId },
+                  data: { stock: 'unavailable' },
+                });
+              }
+            }
+          } else {
+            // ── Simple product: decrement product.stockQuantity ──
+            const updatedProduct = await prisma.product.update({
+              where: { id: item.product.id },
+              data: { stockQuantity: { decrement: item.quantity } },
+              select: { id: true, stockQuantity: true },
+            });
+
+            // If stock hits zero (or below), mark product as unavailable
+            if (updatedProduct.stockQuantity <= 0) {
+              await prisma.product.update({
+                where: { id: updatedProduct.id },
+                data: { stock: 'unavailable', stockQuantity: 0 },
+              });
+            }
+          }
+        } catch (stockErr) {
+          console.error(`[Checkout] Stock deduction failed for item (product=${item.product.id}, variant=${item.variantId}):`, stockErr.message);
+        }
+      })
+    );
+
+    await Promise.all(stockDeductionPromises);
+
+    // ── Convert active reservations → 'converted' ───────────────────────────────
     convertReservation({ userId: user.id, items: reservationItems }).catch((err) =>
       console.error('[Checkout] convertReservation error (non-fatal):', err)
     );
@@ -459,7 +527,7 @@ async function checkout(req, res) {
     await prisma.abandonedCart.updateMany({
       where: { customerId: user.id, status: 'abandoned' },
       data: { status: 'recovered', recoveredAt: new Date() },
-    }).catch(() => {});
+    }).catch(() => { });
 
     return ok(res, {
       message: 'Order created successfully',
@@ -481,16 +549,16 @@ async function getConsumerOrders(req, res) {
     const orders = await prisma.order.findMany({
       where: { customerId: user.id },
       include: {
-        items: { 
-          include: { 
-            product: { 
-              include: { 
+        items: {
+          include: {
+            product: {
+              include: {
                 images: true,
                 variants: { include: { images: true } }
-              } 
+              }
             },
             variant: { include: { images: true } }
-          } 
+          }
         },
         shippingAddress: true, billingAddress: true,
       },
