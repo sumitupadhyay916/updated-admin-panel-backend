@@ -176,7 +176,8 @@ function transformPublicProduct(product) {
     category: product.category.slug || product.category.cid,
     subcategory: product.subcategory?.slug || product.subcategorySlug || null,
     subcategorySlug: product.subcategorySlug || product.subcategory?.slug || null,
-    brand: metadata.brand || product.seller.businessName || product.seller.name,
+    // Only expose explicit product brand. Do not auto-fill from seller details.
+    brand: metadata.brand || null,
     sizes,
     colors,
     ageGroups: metadata.ageGroups || [],
