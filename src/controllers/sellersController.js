@@ -364,46 +364,126 @@ async function deleteSeller(req, res) {
     return fail(res, { status: 404, message: 'Seller not found' });
   }
 
-  // Super admin can delete any seller
-  if (req.user.role === 'super_admin') {
-    await prisma.user.delete({ where: { id: req.params.id } });
-    return ok(res, { message: 'Seller deleted', data: null });
-  }
-
-  // Admin must have authorization
-  if (req.user.role === 'admin') {
-    const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
-
-    if (!hasAccess) {
-      logAuthorizationFailure({
-        userId: req.user.id,
-        role: req.user.role,
-        operation: 'delete',
-        sellerId: req.params.id,
-        reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
+  // Helper transaction to delete all associated data perfectly
+  const executeCompleteDeletion = async (userId) => {
+    await prisma.$transaction(async (tx) => {
+      // Reassign support pages updated by this user
+      await tx.supportPage.updateMany({
+        where: { updatedById: userId },
+        data: { updatedById: req.user.id }
       });
-      return fail(res, {
-        status: 403,
-        message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
+
+      // Clear basic relations and junction tables
+      await tx.adminCategory.deleteMany({ where: { adminId: userId } });
+      await tx.sellerCategory.deleteMany({ where: { OR: [{ adminId: userId }, { sellerId: userId }] } });
+      await tx.payout.deleteMany({ where: { sellerId: userId } });
+      await tx.coupon.deleteMany({ where: { createdById: userId } });
+      await tx.queryResponse.deleteMany({ where: { respondedById: userId } });
+      await tx.orderTimeline.deleteMany({ where: { createdById: userId } });
+      await tx.inventoryMovement.deleteMany({ where: { createdById: userId } });
+      await tx.abandonedCart.deleteMany({ where: { sellerId: userId } });
+      
+      // Handle Products and dependencies
+      const sellerProducts = await tx.product.findMany({ 
+        where: { sellerId: userId },
+        select: { id: true }
       });
+      let productIds = sellerProducts.map(p => p.id);
+
+      // Categories created by this user
+      const userCategories = await tx.category.findMany({
+        where: { createdById: userId },
+        select: { id: true }
+      });
+      const categoryIds = userCategories.map(c => c.id);
+
+      if (categoryIds.length > 0) {
+        const categoryProducts = await tx.product.findMany({
+          where: { categoryId: { in: categoryIds } },
+          select: { id: true }
+        });
+        const catProductIds = categoryProducts.map(p => p.id);
+        productIds = [...new Set([...productIds, ...catProductIds])];
+      }
+
+      // Clear Product dependencies (Restrict constraints)
+      if (productIds.length > 0) {
+        await tx.orderItem.deleteMany({ where: { productId: { in: productIds } } });
+        await tx.inventoryMovement.deleteMany({ where: { productId: { in: productIds } } });
+        await tx.product.deleteMany({ where: { id: { in: productIds } } });
+      }
+
+      // Delete the Categories safely
+      if (categoryIds.length > 0) {
+        await tx.subcategory.deleteMany({ where: { categoryId: { in: categoryIds } } });
+        await tx.category.deleteMany({ where: { id: { in: categoryIds } } });
+      }
+
+      // Handle orders made by seller as a customer
+      const customerOrders = await tx.order.findMany({
+        where: { customerId: userId },
+        select: { id: true }
+      });
+      const orderIds = customerOrders.map(o => o.id);
+      if (orderIds.length > 0) {
+        await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.orderTimeline.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+
+      // Delete the User
+      await tx.user.delete({ where: { id: userId } });
+    });
+  };
+
+  try {
+    // Super admin can delete any seller
+    if (req.user.role === 'super_admin') {
+      await executeCompleteDeletion(req.params.id);
+      return ok(res, { message: 'Seller and all associated data permanently deleted.', data: null });
     }
 
-    await prisma.user.delete({ where: { id: req.params.id } });
-    return ok(res, { message: 'Seller deleted', data: null });
-  }
+    // Admin must have authorization
+    if (req.user.role === 'admin') {
+      const hasAccess = await canAdminAccessSeller(req.user.id, req.params.id, prisma);
 
-  // Other roles cannot delete sellers
-  logAuthorizationFailure({
-    userId: req.user.id,
-    role: req.user.role,
-    operation: 'delete',
-    sellerId: req.params.id,
-    reason: 'Insufficient permissions - only admins and super_admins can delete seller data'
-  });
-  return fail(res, {
-    status: 403,
-    message: 'Insufficient permissions to delete seller data'
-  });
+      if (!hasAccess) {
+        logAuthorizationFailure({
+          userId: req.user.id,
+          role: req.user.role,
+          operation: 'delete',
+          sellerId: req.params.id,
+          reason: 'Seller not in admin\'s assigned categories or not created by admin/super_admin'
+        });
+        return fail(res, {
+          status: 403,
+          message: 'You do not have permission to delete this seller. Sellers must belong to your assigned categories and be created by you or a super admin.'
+        });
+      }
+
+      await executeCompleteDeletion(req.params.id);
+      return ok(res, { message: 'Seller and all associated data permanently deleted.', data: null });
+    }
+
+    // Other roles cannot delete sellers
+    logAuthorizationFailure({
+      userId: req.user.id,
+      role: req.user.role,
+      operation: 'delete',
+      sellerId: req.params.id,
+      reason: 'Insufficient permissions - only admins and super_admins can delete seller data'
+    });
+    return fail(res, {
+      status: 403,
+      message: 'Insufficient permissions to delete seller data'
+    });
+  } catch (error) {
+    console.error('Error completely deleting seller:', error);
+    return fail(res, { 
+      status: 500, 
+      message: 'Failed to fully delete seller and their data. Please try again or contact support.' 
+    });
+  }
 }
 
 async function toggleSellerStatus(req, res) {
