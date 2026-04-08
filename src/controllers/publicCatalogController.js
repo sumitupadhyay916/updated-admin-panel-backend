@@ -108,8 +108,8 @@ function transformPublicProduct(product) {
         price: Number(v.price),
         mrp: v.comparePrice ? Number(v.comparePrice) : null,
         comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
-        stock: v.stock,
-        stockQuantity: v.stock,
+        stock: v.stockQuantity ?? v.stock ?? 0,        // stockQuantity is authoritative (decremented at order time)
+        stockQuantity: v.stockQuantity ?? v.stock ?? 0, // same — must match
         description: v.description || null,
         images: variantImages,
         image: variantImages[0] || product.images[0]?.url || null,
@@ -127,8 +127,8 @@ function transformPublicProduct(product) {
       price: Number(v.price),
       mrp: v.comparePrice ? Number(v.comparePrice) : null,
       comparePrice: v.comparePrice ? Number(v.comparePrice) : null,
-      stock: v.stock,
-      stockQuantity: v.stock,
+      stock: v.stockQuantity ?? v.stock ?? 0,        // stockQuantity is authoritative
+      stockQuantity: v.stockQuantity ?? v.stock ?? 0, // same
       description: v.description || null,
       images: variantImages,
       image: variantImages[0] || product.images[0]?.url || null,
@@ -138,9 +138,9 @@ function transformPublicProduct(product) {
     };
   });
 
-  // Calculate aggregate stock
+  // Calculate aggregate stock using stockQuantity (authoritative decremented field)
   const totalStock = variants.length > 0
-    ? variants.reduce((sum, v) => sum + (v.stock || 0), 0)
+    ? variants.reduce((sum, v) => sum + (v.stockQuantity || 0), 0)
     : (product.stock === 'available' ? (product.stockQuantity || 0) : 0);
 
   const firstVariant = variants.length > 0 ? variants[0] : null;
@@ -214,9 +214,10 @@ function transformPublicProduct(product) {
     averageRating: product.averageRating || 0,
     reviewCount: product.reviewCount || 0,
     qualityLabel: product.averageRating <= 2 ? 'Good' : (product.averageRating < 5 ? 'Best' : 'Excellent'),
-    isNew: product.isFeatured,
-    hasVariants: variants.length > 0,
-    isBestseller: product.reviewCount > 10
+    isNew: metadata.isNew === true,
+    isFeatured: product.isFeatured === true,
+    isBestseller: metadata.isBestseller === true,
+    hasVariants: variants.length > 0
   };
 }
 

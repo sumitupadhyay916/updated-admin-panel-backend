@@ -1205,21 +1205,41 @@ async function getInventoryStats(req, res) {
       }
     }
 
-    // Get all products for this seller/admin
+    // Get all products for this seller/admin — include variants to compute real stock
     const products = await prisma.product.findMany({
       where,
-      select: { id: true, stockQuantity: true, lowStockThreshold: true, stock: true },
+      select: {
+        id: true,
+        stockQuantity: true,
+        lowStockThreshold: true,
+        stock: true,
+        hasVariants: true,
+        variants: {
+          where: { isActive: true },
+          select: { stockQuantity: true },
+        },
+      },
     });
 
     const productIds = products.map(p => p.id);
     const totalProducts = products.length;
 
-    // Sum total stock quantity across all products
-    const totalStockQuantity = products.reduce((sum, p) => sum + (p.stockQuantity || 0), 0);
+    // For variant products, stock = sum of active variant stockQuantities.
+    // We check variants.length directly (not hasVariants flag) because hasVariants
+    // can be stale/false even when the product genuinely has variants in the DB.
+    const getProductStock = (p) => {
+      if (p.variants && p.variants.length > 0) {
+        return p.variants.reduce((s, v) => s + (v.stockQuantity || 0), 0);
+      }
+      return p.stockQuantity || 0;
+    };
 
-    // Count low stock products (where stockQuantity < lowStockThreshold)
+    // Sum total stock quantity across all products (variant-aware)
+    const totalStockQuantity = products.reduce((sum, p) => sum + getProductStock(p), 0);
+
+    // Count low stock products
     const lowStockProducts = products.filter(p =>
-      (p.stockQuantity || 0) < (p.lowStockThreshold || 5)
+      getProductStock(p) < (p.lowStockThreshold || 5)
     ).length;
 
     // Sum delivered quantities (products in delivered orders)
@@ -1250,19 +1270,24 @@ async function getInventoryStats(req, res) {
       _sum: { quantity: true },
     });
 
+    const deliveredQuantity = Number(deliveredResult._sum.quantity || 0);
+    const reservedQuantity  = Number(reservedResult._sum.quantity  || 0);
+    const shippingQuantity  = Number(shippingResult._sum.quantity  || 0);
+
+    // totalStockQuantity = ORIGINAL stock (before any orders)
+    //   = current remaining shelf stock + delivered + in-shipping
+    // This matches the per-product row formula so the header and table are consistent.
+    const originalTotalStockQuantity = totalStockQuantity + deliveredQuantity + shippingQuantity;
+
     const stats = {
       totalProducts,
-      totalStockQuantity,
-      deliveredQuantity: Number(deliveredResult._sum.quantity || 0),
-      reservedQuantity: Number(reservedResult._sum.quantity || 0),
-      shippingQuantity: Number(shippingResult._sum.quantity || 0),
+      totalStockQuantity: originalTotalStockQuantity,
+      currentStockQuantity: totalStockQuantity, // current remaining, for reference
+      deliveredQuantity,
+      reservedQuantity,
+      shippingQuantity,
       lowStockProducts,
     };
-
-    // NOTE: Stock status is NOT auto-updated here. It should only be changed
-    // manually by admins/sellers or via the updateProductStock endpoint.
-    // Auto-updating here caused products to incorrectly go unavailable when
-    // the inventory stats page was loaded.
 
     return ok(res, {
       message: 'Inventory stats fetched',
@@ -1533,21 +1558,29 @@ async function getProductInventoryDetails(req, res) {
   const reservedQuantity = Number(inCartCount._sum.quantity || 0);
   const shippingQuantity = Number(inShippingCount._sum.quantity || 0);
 
-  // For variants, totalStock is the sum of variant stock
-  let totalStock = product.stockQuantity || 0;
-  if (product.hasVariants && product.variants && product.variants.length > 0) {
-    totalStock = product.variants.reduce((sum, v) => sum + (v.stockQuantity || 0), 0);
+  // currentStock = what physically remains on the shelf right now (after all orders decremented it)
+  let currentStock = product.stockQuantity || 0;
+  if (product.variants && product.variants.length > 0) {
+    currentStock = product.variants.reduce((sum, v) => sum + (v.stockQuantity || 0), 0);
   }
 
-  const availableStock = Math.max(0, totalStock - reservedQuantity - shippingQuantity - deliveredQuantity);
+  // totalStock = ORIGINAL stock before any orders were placed
+  //   = current remaining shelf stock + items already shipped + items already delivered
+  // This is the "how many units did we ever have" number (e.g. 182 for Sparks shoes)
+  const totalStock = currentStock + shippingQuantity + deliveredQuantity;
+
+  // availableStock = units currently on shelf and not yet reserved by active carts
+  // (shippingQuantity & deliveredQuantity are already deducted from currentStock at order time)
+  const availableStock = Math.max(0, currentStock - reservedQuantity);
 
   return ok(res, {
     message: 'Product inventory details fetched',
     data: {
       ...serializeProduct(product),
-      variants: product.variants, // Pass variants so frontend can access their IDs and fields
+      variants: product.variants,
       totalStock,
       availableStock,
+      currentStock,      // raw shelf stock, useful for debugging
       deliveredQuantity,
       reservedQuantity,
       shippingQuantity,
